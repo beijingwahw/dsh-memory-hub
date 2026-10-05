@@ -2,6 +2,30 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.10.0] - 2026-10-05
+
+### Added（真实数据接地，G6 真实数据门）
+
+- **G6 真实数据门（real-data grounding gate）**（`eval/realdata.ts` + `eval/realdata/`）：把离线质量评估从"固定 seed 合成黄金语料自证"升级为"**真实数据验证 + 合成语料回归**"双轨——
+  - **真实可信语料**：Node.js 官方 API 文档（path / os，**固定 tag v26.10.0** 快照，SHA-256 固化在 `eval/realdata/MANIFEST.md`），随仓库分发、评测不联网、跨机器逐字节可复现；
+  - **生产同路径入库**：真实文档文本走 `planImport`（`splitDocument` 切块 → kind 推断 → 敏感过滤 → 长短校验 → 内容哈希幂等 id）→ `MemoryEntry[]`，与插件启动时 `importSources` 的真实数据接入路径**完全一致**，验证的不是"评估自证"而是"插件对接真实数据"本身；
+  - **真实问句 + 语义锚标注**：24 个真实 API 使用问句（英文），以 API 专名/关键短语为**语义空间锚**标注相关记忆（涵盖标题块/描述块/示例块，避免切块错位低估真实召回）；锚点完整性守卫（任一查询锚命中为空即门禁红，语料漂移可检测）；
+  - **保守可复算门限**：实测基线 recall@1=0.792 / recall@3=0.875 / recall@5=0.958 / MRR=0.854，门限冻结为 **recall@1 ≥ 0.75 / recall@3 ≥ 0.85 / recall@5 ≥ 0.95**——真实文档含代码块/多段落，不可能像合成语料那样 100% 第一答命中，但 top-3/top-5 必须高置信；
+  - **报告并入**：`npm run eval` 生成的质量报告新增 G6 场景段落（条目数/查询数/全指标），G1–G5 合成语料门限**全部保持**（兼容性零回归）。
+
+### Changed（改进）
+
+- 既有 324 项测试全部保持通过并扩展至 **325 项**（新增 G6 真实数据门断言 + G6 报告场景）；覆盖率 **lines 100 / branches 97.89 / functions 100 / statements 100**（branches 97.87 → 97.89 微升）；
+- `.prettierignore` 新增 `eval/realdata/` 与 `eval/reports/`：固化语料逐字节不可变（MANIFEST 哈希一致性），生成物不参与格式门；
+- `npm run eval` 六门限 → **七门限**（G1–G6），`npm test` / CI `quality-eval` job 自动涵盖真实数据门；
+- 文档同步：README / docs/ARCHITECTURE 更新至 0.10.0，真实数据接地全过程与实测对比见 `docs/GROUND-0.10.md`。
+
+### 兼容性
+
+- 四工具签名（memory_store / memory_recall / memory_forget / memory_status）、`MemoryEntry` 数据契约、`cordis.patch.yml` 安装方式**完全不变**；
+- **纯函数零外部依赖**立场不变（G6 语料随包分发，不新增任何 npm 依赖、评测不联网）；既有 324 项测试逐项复证（325 项全绿）；
+- 合成语料评估（G1–G5）门限与报告格式不变，仅追加 G6 段落；不配置 `importSources` 的运行时行为与 0.9.0 完全一致。
+
 ## [0.9.0] - 2026-10-05
 
 ### Added（16 项薄弱项深度闭环）
