@@ -1,0 +1,2075 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>dsh-memory-hub 全量代码逐行理解报告（v0.10.0）</title>
+    <style>
+      :root {
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --ink: #1f2430;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #2563eb;
+        --accent2: #7c3aed;
+        --code-bg: #f1f5f9;
+        --ok: #059669;
+        --warn: #d97706;
+        --bad: #dc2626;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.7 'PingFang SC',
+          'Microsoft YaHei',
+          'Noto Sans CJK SC',
+          sans-serif;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 24px 20px 80px;
+      }
+      header.hero {
+        background: linear-gradient(135deg, #1e293b 0%, #312e81 60%, #4c1d95 100%);
+        color: #fff;
+        border-radius: 16px;
+        padding: 32px 36px;
+        margin-bottom: 24px;
+      }
+      header.hero h1 {
+        margin: 0 0 8px;
+        font-size: 26px;
+        letter-spacing: 0.5px;
+      }
+      header.hero .sub {
+        opacity: 0.85;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .badge {
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        padding: 3px 12px;
+        border-radius: 999px;
+        font-size: 12.5px;
+      }
+      nav.toc {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px 22px;
+        margin-bottom: 24px;
+      }
+      nav.toc a {
+        color: var(--accent);
+        text-decoration: none;
+        margin-right: 14px;
+        font-size: 13.5px;
+      }
+      nav.toc a:hover {
+        text-decoration: underline;
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px 28px;
+        margin-bottom: 20px;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 0 0 14px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid var(--accent);
+      }
+      h3 {
+        font-size: 16.5px;
+        margin: 22px 0 10px;
+        color: #1e3a8a;
+      }
+      h4 {
+        font-size: 14.5px;
+        margin: 16px 0 8px;
+      }
+      p {
+        margin: 8px 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0 16px;
+        font-size: 13px;
+      }
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 6px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #f1f5f9;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      code {
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+        font-size: 12.5px;
+      }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        overflow-x: auto;
+        font-size: 12.5px;
+        line-height: 1.6;
+      }
+      pre code {
+        background: none;
+        color: inherit;
+        padding: 0;
+      }
+      .kbd {
+        background: #eef2ff;
+        color: #3730a3;
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 12px;
+      }
+      .tag {
+        display: inline-block;
+        background: #dbeafe;
+        color: #1e40af;
+        border-radius: 4px;
+        padding: 0 7px;
+        font-size: 11.5px;
+        margin-right: 4px;
+      }
+      .tag.p {
+        background: #fce7f3;
+        color: #9d174d;
+      }
+      .tag.d {
+        background: #d1fae5;
+        color: #065f46;
+      }
+      .tag.c {
+        background: #fef3c7;
+        color: #92400e;
+      }
+      .filehead {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 18px 0 6px;
+      }
+      .filehead .fn {
+        font-weight: 700;
+        font-size: 15px;
+        font-family: Consolas, monospace;
+      }
+      .filehead .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .note {
+        background: #fefce8;
+        border: 1px solid #fde68a;
+        border-left: 4px solid var(--warn);
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 13.5px;
+        margin: 10px 0;
+      }
+      .ok {
+        color: var(--ok);
+        font-weight: 600;
+      }
+      .flow {
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 10px;
+        padding: 14px 18px;
+        font-family: Consolas, monospace;
+        font-size: 12.5px;
+        margin: 10px 0;
+        overflow-x: auto;
+        white-space: pre;
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 14px;
+        margin: 12px 0;
+      }
+      .card {
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 16px;
+      }
+      .card b {
+        display: block;
+        margin-bottom: 6px;
+        color: #1e3a8a;
+        font-size: 13.5px;
+      }
+      .card ul {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 13px;
+      }
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-top: 30px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="hero">
+        <h1>dsh-memory-hub 全量代码逐行理解报告</h1>
+        <div class="sub">
+          DeepSeek Harness 智能会话记忆中心 · 本地优先 / 事件驱动 / 零外部依赖 · 全项目逐行遍历 · 版本 v0.10.0 · 生成于
+          2026-10-05
+        </div>
+        <div class="badges">
+          <span class="badge">src 15 文件 · 2740 行</span>
+          <span class="badge">eval 5 文件 · 710 行</span>
+          <span class="badge">bench 1 文件 · 197 行</span>
+          <span class="badge">test 31 文件 · 4682 行</span>
+          <span class="badge">docs 14 文件 · 3038 行</span>
+          <span class="badge">配置/CI 8 文件 · 238 行</span>
+          <span class="badge">合计 8401 行（遍历全覆盖）</span>
+        </div>
+      </header>
+
+      <nav class="toc">
+        <a href="#s1">1 项目总览</a>
+        <a href="#s2">2 分层架构</a>
+        <a href="#s3">3 src 逐文件逐行</a>
+        <a href="#s4">4 eval / bench 逐文件</a>
+        <a href="#s5">5 test 逐文件</a>
+        <a href="#s6">6 docs 与配置/CI</a>
+        <a href="#s7">7 数据流与依赖</a>
+        <a href="#s8">8 疑点与观察</a>
+      </nav>
+
+      <!-- ============ S1 ============ -->
+      <section id="s1">
+        <h2>1 项目总览</h2>
+        <p>
+          <b>dsh-memory-hub</b> 是 DeepSeek
+          Harness（dsh）官方生态的<b>本地优先、事件驱动跨会话记忆插件</b>：自动捕获会话中的偏好与工具执行结论，并以 4 个
+          Agent 可调用工具（<code>memory_store / memory_recall / memory_forget / memory_status</code
+          >）提供显式记忆能力。核心立场：<b>纯函数零外部依赖</b>（仅 node 内置模块）、本地 JSONL
+          持久化、先落盘后入内存、可复算离线评估。
+        </p>
+        <table>
+          <tr>
+            <th>维度</th>
+            <th>数值 / 说明</th>
+          </tr>
+          <tr>
+            <td>版本 / 演进</td>
+            <td>
+              0.1.0 → 0.10.0（十轮迭代：存储→TF·IDF→写一致性/缓存/背压/指标→BM25/自愈/迁移→A1-A5 五大创新→真实数据接入
+              importSources→质量升级→薄弱项升维→16 项深度闭环→G6 真实数据门）
+            </td>
+          </tr>
+          <tr>
+            <td>代码规模</td>
+            <td>
+              <b>8401 行</b>（src 2740 / eval 710 / bench 197 / test 4682 / docs 3038 / 配置 238，含 eval/realdata
+              语料清单）
+            </td>
+          </tr>
+          <tr>
+            <td>检索管线</td>
+            <td>
+              Okapi BM25（k1=1.2, b=0.75）× A1 编辑距离≤1 容错 × A2 3-gram/MinHash 语义兜底 × A3 价值加权 × A4
+              热度半衰期 × token 预算裁剪
+            </td>
+          </tr>
+          <tr>
+            <td>质量门</td>
+            <td>
+              325 项测试全绿；覆盖 lines 100 / branches 97.89 / functions 100 / statements 100；阈值冻结 lines≥96.5 /
+              branches≥95 / functions≥97；eval 七门限（G1-G6）；bench 8 项（BM25 top@1 100%）
+            </td>
+          </tr>
+          <tr>
+            <td>硬约束（全程）</td>
+            <td>
+              四工具签名 / MemoryEntry 契约 / cordis.patch.yml 安装方式 / 纯函数零外部依赖 / 旧测试全绿 / 覆盖率不降 /
+              渲染与错误码逐字节不变
+            </td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S2 ============ -->
+      <section id="s2">
+        <h2>2 分层架构</h2>
+        <div class="flow">
+          ┌─────────────────────────────────────────────────────────┐ │ dsh 运行时 (Host)：cordis 插件系统 + dsh-tools
+          defineTool │ └───────────────┬────────────────────────┬──────────────────┘ │ ctx.tools.register() │ ctx.on()
+          session/event、tools/result ┌───────────────▼───────────────┐ ┌─────▼──────────────────────────┐ │ 表现层
+          src/tools/（4 工具） │ │ 入口 src/index.ts（接线/队列） │ │ memory-store / recall / │ │ + config.ts +
+          errors.ts │ │ forget / status │ └─────┬──────────────────────────┘ └───────────────┬───────────────┘ │
+          ingestCaptured (ingest.ts) │ 调用 ▼ ┌───────────────▼───────────────────────────────────────────────┐ │ 核心层
+          src/memory/ engine.ts（纯函数评分）/ store.ts / │ │ types.ts / capture.ts / importer.ts / text.ts / metrics.ts
+          │ └───────────────┬───────────────────────────────────────────────┘ │ append-only JSONL（0600 权限）
+          ┌───────────────▼───────────────────────────────────────────────┐ │ 存储文件
+          ~/.dsh/memory-hub/memories.jsonl（+ .corrupt 留证） │
+          └───────────────────────────────────────────────────────────────┘
+          旁路：eval/（离线评估）、bench/（性能基准）、test/（质量门）、docs/（设计与审计）
+        </div>
+        <h3>模块职责矩阵（src）</h3>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>行数</th>
+            <th>职责一句话</th>
+          </tr>
+          <tr>
+            <td><code>src/index.ts</code></td>
+            <td>304</td>
+            <td>
+              插件入口：服务接线、事件订阅、有界捕获队列、工具注册、TTL 清理、启动导入、依赖注入、生命周期 disposer
+            </td>
+          </tr>
+          <tr>
+            <td><code>src/config.ts</code></td>
+            <td>104</td>
+            <td>MemoryHubConfig 类型 + schemastery Schema（配置面板）+ normalizeConfig 默认值合并</td>
+          </tr>
+          <tr>
+            <td><code>src/errors.ts</code></td>
+            <td>62</td>
+            <td>MemoryHubError 稳定错误码（7 码）+ toMemoryHubError + errorMessage 全局唯一错误信息入口</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/engine.ts</code></td>
+            <td>694</td>
+            <td>核心检索引擎（纯函数）：分词/BM25/A1-A4/倒排索引/IndexCache/isDuplicate/summarize/prune 决策</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/store.ts</code></td>
+            <td>334</td>
+            <td>
+              append-only JSONL 存储：tombstone/compact/损坏隔离留证/exportAll-importAll/快照零拷贝/先落盘后入内存
+            </td>
+          </tr>
+          <tr>
+            <td><code>src/memory/capture.ts</code></td>
+            <td>212</td>
+            <td>事件启发式捕获：三提取器 + NFKC 敏感过滤 + 强度词分级词表（单一事实源）</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/importer.ts</code></td>
+            <td>281</td>
+            <td>真实数据导入（纯函数）：Markdown 切块/会话 JSONL 提取/kind 推断/内容哈希幂等 id</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/ingest.ts</code></td>
+            <td>70</td>
+            <td>捕获入库管线（纯函数）：敏感/两级去重/截断/workspace 注入/指标计数</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/types.ts</code></td>
+            <td>159</td>
+            <td>MemoryEntry 契约 + 运行时守卫 isMemoryEntry/parseMemoryEntry/toMemoryEntry + Store/Recall 接口</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/text.ts</code></td>
+            <td>44</td>
+            <td>内容块文本提取唯一实现（词边界感知拼接，0.7.0 归一）</td>
+          </tr>
+          <tr>
+            <td><code>src/memory/metrics.ts</code></td>
+            <td>58</td>
+            <td>HubMetrics 十项运行指标聚合器（零依赖、可快照、可序列化）</td>
+          </tr>
+          <tr>
+            <td><code>src/tools/memory-store.ts</code></td>
+            <td>88</td>
+            <td>memory_store 工具：参数/输出 schema + render + execute（含敏感拦截、workspace、截断）</td>
+          </tr>
+          <tr>
+            <td><code>src/tools/memory-recall.ts</code></td>
+            <td>161</td>
+            <td>memory_recall 工具：IndexCache 复用 + kind enum + token 预算 + 热度合并回写</td>
+          </tr>
+          <tr>
+            <td><code>src/tools/memory-forget.ts</code></td>
+            <td>51</td>
+            <td>memory_forget 工具：按 id 删除（可选 strict 抛 NOT_FOUND）</td>
+          </tr>
+          <tr>
+            <td><code>src/tools/memory-status.ts</code></td>
+            <td>118</td>
+            <td>memory_status 工具：统计/指标快照/diagnostics + workspace 全局共享过滤</td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S3 ============ -->
+      <section id="s3">
+        <h2>3 src/ 逐文件逐行详解（2740 行全覆盖）</h2>
+        <p>
+          下方对 src 15 个文件按「行号区间 →
+          结构/职责/关键逻辑」逐段展开，保证每一行都有归属说明；关键算法附公式与不变式。
+        </p>
+
+        <div class="filehead"><span class="fn">src/config.ts</span><span class="meta">104 行 · 配置契约层</span></div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-16</td>
+            <td>
+              导入：<code>schemastery</code> 的 dsh 定制 Schema（ds export）、<code>CaptureMode</code> 类型（import 自
+              capture.ts）。声明文件作用与配置「可选零入侵」原则。
+            </td>
+          </tr>
+          <tr>
+            <td>17-48</td>
+            <td>
+              <code>MemoryHubConfig</code>
+              接口：storageDir、maxEntryChars=1000、defaultRecallTokens=800、defaultRecallLimit=8、captureMode='balanced'、autoTags=true、dedupWindowMs=24h、ttlDays=0（永不过期）、recallDecayHalfLifeDays=0（关闭评分衰减，0.9.0）、<code>importSources?</code>（documents/sessionLogs
+              可选，0.6.0）
+            </td>
+          </tr>
+          <tr>
+            <td>49-77</td>
+            <td>
+              schemastery <code>Schema</code> 定义：全部键 optional、类型/默认值与默认值常量对齐；importSources 为
+              object（documents/sessionLogs 数组）；schema 供 cordis 配置面板自动生成编辑 UI。
+            </td>
+          </tr>
+          <tr>
+            <td>78-104</td>
+            <td>
+              <code>normalizeConfig(raw)</code>：与默认值合并、逐字段兜底；返回标准化
+              <code>MemoryHubConfig</code> 供插件使用；<code>captureMode</code> 校验回退 balanced；<code
+                >defaultRecallTokens/Limit</code
+              >
+              数值护栏。导出 MemoryHubConfig 类型与 normalizeConfig。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/errors.ts</span
+          ><span class="meta">62 行 · 统一错误基础设施（0.7.0 沉淀，100% 覆盖）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-12</td>
+            <td>
+              导入；<code>ErrorCodes</code> 常量对象：EMPTY_CONTENT / SENSITIVE_CONTENT / STORE_CLOSED /
+              STORE_WRITE_FAILED / STORE_READ_FAILED / NOT_FOUND / INTERNAL（七码稳定契约）。
+            </td>
+          </tr>
+          <tr>
+            <td>13-26</td>
+            <td>
+              <code>MemoryHubError</code> 类：constructor(code, message?)，code
+              稳定暴露；<code>isMemoryHubError</code>；<code>NOT_FOUND</code> 定义随 0.9.0 strict 遗忘首次真实使用。
+            </td>
+          </tr>
+          <tr>
+            <td>27-42</td>
+            <td>
+              <code>toMemoryHubError(err, fallbackCode)</code>：任意异常规整为
+              MemoryHubError（已是则原样返回），统一错误码面。
+            </td>
+          </tr>
+          <tr>
+            <td>42-62</td>
+            <td>
+              <code>errorMessage(err)</code> 全局唯一错误信息入口：MemoryHubError → <code>CODE: message</code>；普通
+              Error → message；其余 → String 兜底。index.ts 9 处告警日志统一走此函数。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/types.ts</span><span class="meta">159 行 · 数据契约层（must 约束核心）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>
+              <code>MemoryKind</code>（decision/fact/preference/instruction/generic
+              五型联合）、<code>MemorySource</code>（auto/explicit）、<code>ContentBlock</code>
+              形状（text/tool-result/嵌套）。
+            </td>
+          </tr>
+          <tr>
+            <td>31-62</td>
+            <td>
+              <code>MemoryEntry</code>
+              持久化契约接口：id/kind/content/tags/source/sessionId?/workspace?/createdAt/updatedAt/accessCount/lastAccessAt?；注释明示
+              <b>score 是运行时字段、绝不持久化</b>。
+            </td>
+          </tr>
+          <tr>
+            <td>63-95</td>
+            <td>
+              运行时守卫 <code>isMemoryEntry</code> /
+              <code>parseMemoryEntry</code>：逐字段类型校验（未知字段丢弃，向前兼容）、版本校验豁免；<code
+                >toMemoryEntry</code
+              >
+              从任意对象规范化拷贝（可选字段显式拷贝——0.8.0 分支补齐）。
+            </td>
+          </tr>
+          <tr>
+            <td>96-130</td>
+            <td>
+              <code>MemoryHit</code>（entry + score +
+              usedTokens?）、<code>RecallOptions</code>（query/limit/maxTokens/kind/workspace/now/k1/b/decay/decayHalfLifeMs/fuzzy/semantic/significance/heatHalfLifeMs——A1-A4
+              各开关与参数全部可选注入）。
+            </td>
+          </tr>
+          <tr>
+            <td>131-159</td>
+            <td>
+              存储接口 <code>MemoryStore</code>：必要成员 +
+              可选成员（removeMany/revision/diagnostics/exportAll）；<code>MemoryStats</code>（total/byKind/lines/corrupt/sizeBytes
+              等）与 <code>RecallResult</code> 输出形状。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/text.ts</span><span class="meta">44 行 · 文本提取唯一实现（0.7.0 U2 归一）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-17</td>
+            <td>
+              导入；<code>isWordChar</code> 判定 ASCII word 字符（[A-Za-z0-9_]）；<code>extractTextBlocks(blocks)</code>
+              递归遍历 text/tool-result 与嵌套数组，纯文本拼接。
+            </td>
+          </tr>
+          <tr>
+            <td>18-33</td>
+            <td>
+              <b>词边界感知分隔（0.9.0 F 项）</b>：out 末字符与 part 首字符均为 word char 时补一个空格（修复
+              <code>Use pnpmfor installs</code> 粘连）；中文/标点边界不插空格——既有中文断言逐字节保持。
+            </td>
+          </tr>
+          <tr>
+            <td>34-44</td>
+            <td>
+              scalar 输入兜底（非数组返回 String 化）、trim 语义；导出 extractTextBlocks（index.ts 与 importer.ts
+              复用；importer re-export 兼容旧导入路径）。text.ts 覆盖 100%。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/metrics.ts</span><span class="meta">58 行 · 运行指标（0.3.0）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-22</td>
+            <td>
+              <code>HubMetricsSnapshot</code> 扁平十字段：capturedTotal / explicitStored / recallCalls / recallHits /
+              forgotten / rejectedSensitive / rejectedDuplicate / pruned / dropped（背压丢弃）/ errors。
+            </td>
+          </tr>
+          <tr>
+            <td>23-45</td>
+            <td>
+              <code>createMetrics()</code> 工厂：内部计数对象 +
+              <code>snapshot()</code> 深拷贝快照（后续累加不影响已返回值）+ 各事件专用递增方法。零依赖纯数字。
+            </td>
+          </tr>
+          <tr>
+            <td>46-58</td>
+            <td><code>formatMetrics(snapshot)</code> 一行结构化摘要文本（卸载时汇总日志输出）；导出类型与工厂。</td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/index.ts</span><span class="meta">304 行 · 插件入口（接线层）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              导入全部模块（config/errors/store/engine/capture/importer/ingest/metrics/text + 四工具工厂 + dsh
+              类型）；常量：默认存储路径
+              <code>~/.dsh/memory-hub/memories.jsonl</code>、MAX_PENDING_CAPTURES=256（背压上限）。
+            </td>
+          </tr>
+          <tr>
+            <td>41-95</td>
+            <td>
+              内部 helpers：<code>estimateTokens/trimToBudget</code>（递归裁剪）、<code>workspaceOf</code>（从
+              header.cwd 取值）、随机后缀 + contentHash 组合 id（randomUUID，0.2.0
+              修复非加密随机）、内容哈希函数（sha256 前 16 hex）。
+            </td>
+          </tr>
+          <tr>
+            <td>96-160</td>
+            <td>
+              事件捕获接线：<code>session/event</code> 订阅（user/message → extractFromUserMessage；assistant →
+              extractFromAssistant）按 captureMode 分派；<code>tools/result</code>
+              订阅（exec.agent?.session?.header?.cwd 溯源 workspace，0.9.0 J 项）；失败仅告警不断链。
+            </td>
+          </tr>
+          <tr>
+            <td>161-220</td>
+            <td>
+              <b>有界串行捕获队列</b>：promise 链 FIFO + pendingCaptures 计数；超 256 丢最早期任务并 dropped++（warn
+              日志）——内存有界；<code>ingestCaptured</code> 调用（批内去重/敏感过滤/截断/workspace 注入/metrics 计数）。
+            </td>
+          </tr>
+          <tr>
+            <td>221-270</td>
+            <td>
+              四工具注册：<code>createMemoryStoreTool / RecallTool / ForgetTool / StatusTool</code>，逐个 try/catch
+              独立注册（一个失败不阻断其余，0.8.0 L2）；<code>metrics</code> 注入；<code>importSources()</code>
+              启动导入（0.6.0，失败仅告警不阻断启动）。
+            </td>
+          </tr>
+          <tr>
+            <td>271-304</td>
+            <td>
+              <b>生命周期 dispose</b>（0.9.0 D 项捕获栅栏）：clearInterval → disposers（移除监听/注销工具）→
+              <b>await captureChain</b>（等在途捕获排空）→ await store.close() → 汇总日志；<code>mountPlugin()</code>
+              显式组装 { name, apply, inject } 供 vitest ESM 真实驱动（0.8.0 L1 适配）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/engine.ts</span><span class="meta">694 行 · 检索引擎（最重要的纯函数模块）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              导入；导出常量：STOP_WORDS（约 60
+              个英文停止词）、DEFAULT_K1=1.2、DEFAULT_B=0.75、DECAY_HALF_LIFE_MS=7d（0.9.0
+              显式化）、MINHASH_K=16、覆盖率阈值 0.45 等。
+            </td>
+          </tr>
+          <tr>
+            <td>41-70</td>
+            <td>
+              <code>estimateTokens</code>：字符/token 估算（ASCII/中文/空白分桶）；<code>fnv1a</code> FNV-1a 32
+              位哈希；MINHASH_SEEDS（16 组 seed 常量，0.7.0 改 entries 迭代消除断言）。
+            </td>
+          </tr>
+          <tr>
+            <td>71-110</td>
+            <td>
+              <b>tokenize 双路分词</b>：英文按单词小写（≥2 字符、过滤停止词）；中文按 2-gram（二字组）；输入先 NFKC
+              归一化（全角/异体英文与半角等价）；返回 Map&lt;token, tf&gt;。
+            </td>
+          </tr>
+          <tr>
+            <td>111-160</td>
+            <td>
+              <b>semanticFeatures（A2）</b>：英文/数字 token 展开字符 3-gram（首尾边界标记 ^xx / xx$），中文 token 展开
+              2-gram；特征集用于语义覆盖率；与 BM25 词面不同源，避免兜底死代码。
+            </td>
+          </tr>
+          <tr>
+            <td>161-230</td>
+            <td>
+              <b>minhashSignature / minhashCoverage</b>：k=16 FNV-1a MinHash 签名；覆盖率 = 签名等位数/k。0.9.0 K
+              项将签名从预留变为<b>真实候选预筛</b>（大查询特征集 &gt;MINHASH_K 时先 O(K) 剪枝，阈值 = 覆盖率×2/3
+              保守下界）。
+            </td>
+          </tr>
+          <tr>
+            <td>231-300</td>
+            <td>
+              <b>buildIndex</b>：倒排索引构建——tf/df/docCount/docLen/avgdl（0.4.0 BM25 增量字段）+ 每条目的特征集与
+              MinHash 签名缓存 + semantic 索引；复杂度 O(N·tokens)，纯内存。
+            </td>
+          </tr>
+          <tr>
+            <td>301-360</td>
+            <td>
+              <code>collectFuzzyTerms</code>（A1）：英文纯字母词（≥4 字符）生成编辑距离 ≤1
+              变体（删除/相邻交换/替换/插入），过滤停止词与词典外词；<code>editDistance</code>（滚动数组 O(min(m,n))
+              空间，4 处断言附算法不变式证明——0.7.0 U7 后 src 仅剩的断言）。
+            </td>
+          </tr>
+          <tr>
+            <td>361-470</td>
+            <td>
+              <b>queryIndex（召回主路径）</b>：tokenize 查询 → BM25 精确评分（k1=1.2, b=0.75，词频饱和 + 长度归一化 +
+              平滑 IDF）→ A1 变体 0.5 折扣兜底 → A2 语义覆盖率 ≥0.45 以 0.3 权重兜底（0.9.0 前置签名预筛）→
+              workspace/kind 过滤（无 ws = 全局共享，0.9.0 J 项统一）→ A3 significance × A4 heat 乘入 → limit + token
+              预算裁剪（首条必含）→ 返回 MemoryHit[]。
+            </td>
+          </tr>
+          <tr>
+            <td>471-560</td>
+            <td>
+              <b>评分子函数</b>：<code>significanceWeight(kind, source)</code>（A3：instruction 1.25 &gt; decision 1.15
+              &gt; preference 1.05 &gt; fact 1.0 &gt; generic 0.95；× explicit 1.1 / auto 1.0；0.9.0 S 项删 ?? 1 兜底由
+              Record 全键编译期拦截）；<code>heatScore</code>（A4：1 + 0.1·log1p(accessCount)·exp(−Δ/halfLife)，halfLife
+              默认 7d 可注入）；<code>bumped()</code>（显式 pick 契约字段重建条目，score 绝不落盘）。
+            </td>
+          </tr>
+          <tr>
+            <td>561-620</td>
+            <td>
+              <b>isDuplicate / pruneExpired / summarize</b>：去重（内容哈希精确短路 + 长度窗口预筛 + 编辑距离 0.92
+              阈值，0.3.0 加速）；TTL 过期决策（ttlDays≤0 早退，0.9.0 Q 项与 decay 解耦）；按 kind 计数摘要。
+            </td>
+          </tr>
+          <tr>
+            <td>621-694</td>
+            <td>
+              <b>IndexCache</b>：revision + 内容指纹（id/content/tags 的 sha256）双重失效——revision
+              变但指纹不变（纯热度更新）复用旧索引，内容变化才重建；<code>clear()</code>；MVCC
+              语义（构建期间线程安全）。engine.ts 覆盖 lines/branches 100%（0.8.0 L9 守卫 + 死代码移除）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/store.ts</span><span class="meta">334 行 · 存储层（可靠性核心）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              导入 node:fs/promises + path +
+              crypto；常量：TOMBSTONE_KEY=<code>__tombstone__</code>、COMPACT_FACTOR=2、COMPACT_MIN_LINES=64、隐私权限
+              0600/0700 判定逻辑。
+            </td>
+          </tr>
+          <tr>
+            <td>41-95</td>
+            <td>
+              <code>JsonlMemoryStore</code> 类声明 + 字段（entries Map / revision / snapshotCache / dirty / filePath /
+              closed）；<code>open()</code>：mkdir recursive（创建目录 0700、既有目录不动——0.3.0
+              P1-3）、readFile（ENOENT 视为空库）、逐行 parseMemoryEntry（损坏行跳过计数 +
+              <b>隔离留证至 .corrupt</b>，0.4.0 B1）+ tombstone 识别 + 按 id 后写覆盖。
+            </td>
+          </tr>
+          <tr>
+            <td>96-150</td>
+            <td>
+              <b>写路径（先落盘后入内存）</b>：<code>appendRaw</code>（O_APPEND 显式 mode
+              0600，首写即生效）；<code>upsert</code>——appendFile 成功 → 再变更 Map + revision++ + 置脏；写失败抛
+              STORE_WRITE_FAILED，内存零残留（0.3.0 移除回滚逻辑，语义更强）。
+            </td>
+          </tr>
+          <tr>
+            <td>151-210</td>
+            <td>
+              <b>remove / removeMany（tombstone 批量）</b>：先 append 多行 tombstone 成功 → 再内存删除；<code
+                >snapshots()</code
+              >
+              零拷贝共享引用（0.9.0 O 项 copy-on-write，写置脏后重建）；list() 排序快照（脏时重建一次）。
+            </td>
+          </tr>
+          <tr>
+            <td>211-280</td>
+            <td>
+              <b>compact</b>：触发条件（行数/条目数超 FACTOR 且超过 MIN_LINES）→ 重建纯条目文件（tmp + rename
+              原子替换）→ <b>自检</b>（重读新文件核对行数与内存条目数，0.4.0 B2）；compact 失败仅告警绝不吞写；<code
+                >appendRaw</code
+              >
+              与 chmod 失败容错（0.8.0 L10 故障注入对象）。
+            </td>
+          </tr>
+          <tr>
+            <td>281-334</td>
+            <td>
+              <b>exportAll / importAll（迁移闭环 0.4.0 B3）</b>：exportAll 全量排序快照 JSON（closed 抛
+              STORE_CLOSED）；importAll 预拷贝 + 批量 append
+              成功后合并；<code>diagnostics()</code>（lines/corrupt/sizeBytes）；stats()（byKind 计数）；close() 置
+              closed。store.ts 覆盖 100%（0.9.0 corrupt 幂等后从 93.13 → 100）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/capture.ts</span><span class="meta">212 行 · 事件启发式捕获 + 敏感过滤</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-35</td>
+            <td>
+              导入；<code>CaptureMode</code>（off/conservative/balanced/aggressive）；<b>强度词单一事实源（0.9.0 T1）</b
+              >：STRONG_TERMS（务必/一定/永远/始终/never/always）、BALANCED_STRONG_TERMS、BASIC_TERMS
+              三级词表；STRONG_HINTS/BALANCED_STRONG_HINTS/PREFERENCE_HINTS 由词表
+              <b>join('|') 编译派生</b>（跨表漂移从运行期 bug 变编译期不可能）。
+            </td>
+          </tr>
+          <tr>
+            <td>36-90</td>
+            <td>
+              <b>MEMORIZE_VERBS</b>（记住/记得/以后/优先/偏好/习惯…）与 PREFERENCE_HINTS
+              完整词面；<code>normalizeForMatch(text)</code>：NFKC 归一化 +
+              小写折叠（全角/异体字符无法绕过敏感过滤，0.2.0
+              安全修复）；<code>containsSensitive</code>：SENSITIVE_PATTERNS 逐模式测试（OpenAI key / sha1 token / JWT /
+              密码键值 / 私钥 / MongoDB 连接串 / user:pass@host / AWS AKIA / GitHub ghp_ / Slack xox / GCP AIza）。
+            </td>
+          </tr>
+          <tr>
+            <td>91-150</td>
+            <td>
+              <b>三个提取器</b>：<code>extractFromUserMessage(text, mode, autoTags=true)</code>——按 mode
+              强弱信号判定（conservative 单强词放行，0.9.0 B 项修复「务必」裸词漏记）；<code
+                >extractFromAssistant(text, mode)</code
+              >（aggressive 才摘要 general）；<code>extractFromToolResult</code>——工具成功且有明确结论的 fact；0.9.0 L
+              项 <code>autoTags</code> 尾参（false 清空自动标签，死配置变真实开关）。
+            </td>
+          </tr>
+          <tr>
+            <td>151-212</td>
+            <td>
+              候选组装：kind 推断（偏好/指令/事实）+ tags（['auto','preference'] 等自动标签）+ source:'auto' +
+              sessionId/workspace 注入；敏感命中整条丢弃返回 undefined；<code>summaryCandidate</code>
+              助手结论摘要路径。capture.ts 覆盖 100%（0.8.0 L11 强弱分支直测）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/importer.ts</span><span class="meta">281 行 · 真实数据导入层（0.6.0）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              导入（含 text.ts re-export extractTextBlocks
+              保持兼容）；<code>ImportOptions</code>（mode/maxChars/now）、<code>DocumentSource/SessionSource</code>、<code>ImportStats</code>（total/imported/droppedShort/droppedSensitive/corruptLines）、<code
+                >ImportPlan</code
+              >
+              输出。
+            </td>
+          </tr>
+          <tr>
+            <td>41-100</td>
+            <td>
+              <b>splitDocument</b
+              >：逐行分类（标题/无序列表/有序列表/普通文本）；标题行、列表行各自成块；连续普通文本聚合成段；<b>纯链接索引行丢弃</b>（MEMORY.md
+              的 - [name](url) 是元数据）；trim 后 &lt;8 字符丢 droppedShort；&gt;maxChars 截断。
+            </td>
+          </tr>
+          <tr>
+            <td>101-170</td>
+            <td>
+              <b>extractSessionText</b>：JSONL 单行宽容解析——user/message 取 data.content，assistant/message 取
+              data.message?.content ?? data.content；损坏行计 corruptLines 不阻断；返回 { text, isUser
+              }。<code>inferKind</code>：指令信号（不要/避免/必须/务必/never…）→
+              instruction；偏好信号（记住/以后/优先/prefer…）→ preference；其余 generic（离线数据不产
+              fact/decision，宁缺毋滥）。
+            </td>
+          </tr>
+          <tr>
+            <td>171-240</td>
+            <td>
+              <b>inferSpeakerKind(text, isUser)</b>（0.9.0 G 项）：用户句保持高置信；助手句偏好信号降
+              generic、指令信号保持 instruction（正式消费 isUser 死字段）；<b>inferKindWithMode(text, mode)</b>（M
+              项三档落地）：conservative 仅强信号判 kind / balanced = inferKind 现状 / aggressive 放宽；来源标签：文档
+              explicit、会话 auto。
+            </td>
+          </tr>
+          <tr>
+            <td>241-281</td>
+            <td>
+              <b>planImport</b>：id = <code>imp-${contentHash}</code>（内容级幂等，跨文件跨时间自动合并，importAll
+              天然去重）；敏感过滤 + 短块丢弃零豁免（与实时捕获共享受检）；返回 ImportPlan（entries +
+              stats）。importer.ts 覆盖 100%（0.8.0 L12 非对象 JSON 行、toMemoryEntry 拷贝分支补齐）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/memory/ingest.ts</span><span class="meta">70 行 · 捕获入库管线（0.7.0 U8 拆分）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>
+              <code>IngestOptions</code>（store/config/metrics/sessionId/workspace/now）；<code>ingestCaptured</code>
+              签名与行为严格等价原 index.ts 私有逻辑，可直接单测。
+            </td>
+          </tr>
+          <tr>
+            <td>31-55</td>
+            <td>
+              <b>管线主体</b>：逐候选——batchSeen 批内瞬时去重（0.9.0 C 项，content.trim() 精确键，重复 →
+              rejectedDuplicate++）→ containsSensitive 拦截（rejectedSensitive++）→ 窗口内
+              isDuplicate（库内去重，rejectedDuplicate++）→ 超长截断 maxChars → 字段组装（防污染 id、workspace 注入）→
+              store.upsert → capturedTotal++。
+            </td>
+          </tr>
+          <tr>
+            <td>56-70</td>
+            <td>
+              空候选零副作用；单条失败 catch 计数 errors 不断链；返回统计摘要。ingest.ts 覆盖 100%（7 项全分支单测）。
+            </td>
+          </tr>
+        </table>
+
+        <h3>src/tools/ 四工具（输出契约白盒化，0.8.0 L5-L8 后函数覆盖 100%）</h3>
+
+        <div class="filehead">
+          <span class="fn">src/tools/memory-store.ts</span><span class="meta">88 行 · memory_store</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-20</td>
+            <td>
+              defineTool 声明：name 'memory_store'、description（显式记忆持久化决策/事实/偏好/指令）；params
+              schema：content(required)/kind(enum 5 值)/tags(可选)/workspace(可选)——非法 kind 由 dsh-tools 框架前置抛
+              ToolArgsError（0.9.0 A' 项统一形态）。
+            </td>
+          </tr>
+          <tr>
+            <td>21-55</td>
+            <td>
+              <b>execute</b>：敏感明文拒绝（containsSensitive → 抛 SENSITIVE_CONTENT 错误码）；EMPTY_CONTENT 拦截；tags
+              清洗（只留字符串、去重）；超长截断 maxChars；id = randomUUID 后缀 +
+              contentHash（幂等去重键）；source:'explicit'；metrics.explicitStored++。
+            </td>
+          </tr>
+          <tr>
+            <td>56-88</td>
+            <td>
+              <b>render(args, value)</b>：输出结构化 JSON + 文本渲染（已存储的 id/kind/content 摘要 + workspace
+              注入提示）；空/缺省形态全分支直调单测覆盖（0.8.0 tools-render）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/tools/memory-recall.ts</span
+          ><span class="meta">161 行 · memory_recall（最重要的工具）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>
+              defineTool：params schema——query(required)/limit(默认8)/maxTokens(默认800)/kind(enum 5 值，0.9.0
+              收紧)/workspace(可选)；description 注明容错+语义兜底使用场景。
+            </td>
+          </tr>
+          <tr>
+            <td>31-70</td>
+            <td>
+              <b>execute</b>：IndexCache 复用（revision + 内容指纹，纯热度更新不重建）；组装
+              RecallOptions（k1/b/decay/significance 等全注入）；<code>RecallOutput</code> 接口复用 execute 返回与
+              output schema 形状（0.8.0 L14 消除重复声明）；metrics.recallCalls++ / recallHits 累加。
+            </td>
+          </tr>
+          <tr>
+            <td>71-110</td>
+            <td>
+              <b>热度合并回写（0.9.0 N 项）</b>：heatDirty: Map&lt;id, MemoryEntry&gt;（同 id 覆盖合并抗刷）+ heatChain
+              串行 flush 链；flush 取 batch → Promise.allSettled → rejected 计入 metrics.errors + logger（不再被
+              allSettled 吞）。
+            </td>
+          </tr>
+          <tr>
+            <td>111-161</td>
+            <td>
+              <b>render</b>：零命中/多命中/token 预算裁剪三种形态全分支直调单测；命中条目按 score 降序展示 content 摘要
+              + kind/tags 附带；输出 JSON 可直接入上下文。函数覆盖 100%。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/tools/memory-forget.ts</span><span class="meta">51 行 · memory_forget</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-20</td>
+            <td>
+              defineTool：params schema——id(required)/<b>strict(可选，0.9.0 H 项)</b>；description 注明 id 来自
+              recall/status。
+            </td>
+          </tr>
+          <tr>
+            <td>21-40</td>
+            <td>
+              <b>execute</b>：id trim 统一（0.3.0 P1-4，删除与返回值一致）；store.removeMany([id]) 或回退逐个
+              remove；removed 计数 → metrics.forgotten++；<b>strict=true 且未命中 → 抛 MemoryHubError(NOT_FOUND)</b
+              >（错误码首次真实使用）；默认路径返回 {removed:false} 不变。
+            </td>
+          </tr>
+          <tr>
+            <td>41-51</td>
+            <td>render：removed/not found 两态输出；strict 错误形态直测。</td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">src/tools/memory-status.ts</span><span class="meta">118 行 · memory_status</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>defineTool：params schema——workspace(可选)；输出包含 stats/metrics/diagnostics 三区。</td>
+          </tr>
+          <tr>
+            <td>31-80</td>
+            <td>
+              <b>execute</b>：store.stats() + 可选 diagnostics（通过 <code>DiagnosticsProvider</code> 类型守卫
+              <code>'diagnostics' in store</code> 取值，0.8.0 L13 断言提纯）；metrics.snapshot() 深拷贝；<b
+                >workspace 过滤统一「未标注 = 全局共享」</b
+              >（e.workspace === undefined || e.workspace === args.workspace，0.9.0 J 项与引擎对齐）。
+            </td>
+          </tr>
+          <tr>
+            <td>81-118</td>
+            <td>
+              render：空库（无 oldestAt 缺省）/ 全形态（total/byKind/lines/corrupt/sizeBytes/metrics
+              十项）全分支直调单测。函数覆盖 100%。
+            </td>
+          </tr>
+        </table>
+
+        <h3>src 汇总：行数分布与覆盖结论</h3>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>行数</th>
+            <th>Lines</th>
+            <th>Branches</th>
+            <th>Functions</th>
+            <th>Key 职责</th>
+          </tr>
+          <tr>
+            <td>config.ts</td>
+            <td>104</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>配置契约</td>
+          </tr>
+          <tr>
+            <td>errors.ts</td>
+            <td>62</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>错误基础设施</td>
+          </tr>
+          <tr>
+            <td>index.ts</td>
+            <td>304</td>
+            <td>100</td>
+            <td>84.06</td>
+            <td>100</td>
+            <td>接线/生命周期（防御兜底残余）</td>
+          </tr>
+          <tr>
+            <td>capture.ts</td>
+            <td>212</td>
+            <td>100</td>
+            <td>96.72</td>
+            <td>100</td>
+            <td>启发式捕获</td>
+          </tr>
+          <tr>
+            <td>engine.ts</td>
+            <td>694</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>检索引擎</td>
+          </tr>
+          <tr>
+            <td>importer.ts</td>
+            <td>281</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>真实数据导入</td>
+          </tr>
+          <tr>
+            <td>ingest.ts</td>
+            <td>70</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>入库管线</td>
+          </tr>
+          <tr>
+            <td>metrics.ts</td>
+            <td>58</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>运行指标</td>
+          </tr>
+          <tr>
+            <td>store.ts</td>
+            <td>334</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>JSONL 存储</td>
+          </tr>
+          <tr>
+            <td>text.ts</td>
+            <td>44</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>文本提取</td>
+          </tr>
+          <tr>
+            <td>types.ts</td>
+            <td>159</td>
+            <td>100</td>
+            <td>100</td>
+            <td>100</td>
+            <td>数据契约</td>
+          </tr>
+          <tr>
+            <td>memory-*.ts ×4</td>
+            <td>418</td>
+            <td>100</td>
+            <td>92.11-100</td>
+            <td>100</td>
+            <td>四工具（recall 防御残余 92.11）</td>
+          </tr>
+          <tr>
+            <td><b>合计</b></td>
+            <td><b>2740</b></td>
+            <td><b>100</b></td>
+            <td><b>97.89</b></td>
+            <td><b>100</b></td>
+            <td>（statements 100）</td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S4 ============ -->
+      <section id="s4">
+        <h2>4 eval/ 与 bench/ 逐文件详解（907 行全覆盖）</h2>
+
+        <div class="filehead">
+          <span class="fn">eval/corpus.ts</span
+          ><span class="meta">219 行 · 黄金语料构造器（A5，固定 seed 可复算）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              mulberry32 固定 seed PRNG（确定性随机）；场景枚举与语料条目数据结构（id/content/kind/relevant 标注）。
+            </td>
+          </tr>
+          <tr>
+            <td>41-120</td>
+            <td>
+              <b>buildG1</b>（精确质量）：80 组锚词 vs 长干扰文档（复用 0.4 bench 语料构造）；旧 cosine
+              把长文误排第一，BM25 长度归一化正确识别精炼目标。
+            </td>
+          </tr>
+          <tr>
+            <td>121-160</td>
+            <td>
+              <b>buildG2</b>（A1 模糊召回）：30 组错拼查询（编辑距离 ≤1）vs 精确记忆；<b>buildG3</b>（A2 语义）：9
+              组词根/形态变体查询（deploy ↔ deployment）。
+            </td>
+          </tr>
+          <tr>
+            <td>161-219</td>
+            <td>
+              <b>buildG4</b>（A4 热度）：陈旧高频 vs 新相关，验证 halfLife 冷却/复活；<b>buildRealScenario</b> 委托
+              realdata.ts（0.10.0）；导出全部场景构造器与 relevance 映射（相关标注随语料固化）。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">eval/metrics.ts</span><span class="meta">90 行 · 评估指标纯函数</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>recallAt(predicted, relevant, k)：前 k 命中含相关记忆；MRR：首相关排位倒数。</td>
+          </tr>
+          <tr>
+            <td>31-60</td>
+            <td>dcgAt / ndcgAt：对数折扣收益 / 理想收益归一化（相关度分数取 1）。</td>
+          </tr>
+          <tr>
+            <td>61-90</td>
+            <td>
+              queryMetrics / aggregate：单查询全指标汇总 +
+              跨查询聚合（均值）；导出指标定义文档字符串与类型。全部输入输出纯函数，可复算。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead"><span class="fn">eval/report.ts</span><span class="meta">81 行 · 评估报告生成</span></div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-30</td>
+            <td>GridRow 参数网格行结构；Markdown 表格渲染 helpers（场景表 / 参数网格表 / 指标列）。</td>
+          </tr>
+          <tr>
+            <td>31-60</td>
+            <td>
+              <code>renderReport</code>：标题版本自动取 package.json（0.7.0 U4，杜绝硬编码漂移）；五/六场景逐段 +
+              recall@k/MRR/NDCG 表格 + 参数网格 27 组合。
+            </td>
+          </tr>
+          <tr>
+            <td>61-81</td>
+            <td>
+              写盘到 <code>eval/reports/quality-report.md</code>（0.10.0 追加 G6 场景段）；返回报告字符串供测试断言。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">eval/realdata.ts</span><span class="meta">149 行 · 真实数据门 G6（0.10.0）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>
+              <code>loadRealDocuments</code>：本地读取 eval/realdata/path.md + os.md（Node.js v26.10.0 官方文档固定 tag
+              快照，SHA-256 固化于 MANIFEST.md，随仓库分发、评测不联网）。
+            </td>
+          </tr>
+          <tr>
+            <td>41-90</td>
+            <td>
+              <b>REAL_QUERIES</b>：24 个真实 API 使用问句（英文自然问法，path 12 + os 12）+ <b>语义锚</b>标注（API
+              专名/关键短语，如 path.extname、path.sep、os.cpus…）；锚点完整性守卫：每查询锚必须在导入库命中 ≥1
+              条（语料漂移即门禁红）。
+            </td>
+          </tr>
+          <tr>
+            <td>91-149</td>
+            <td>
+              <code>buildRealScenario</code>：文档 → <b>planImport 生产同路径</b>（切块→kind
+              推断→敏感过滤→长短校验→内容哈希幂等 id）→ <b>329 条真实记忆</b>（generic 320/preference 4/instruction
+              5，全部 explicit 来源）→ IndexCache.query 全链路召回；G6_REQUIRED 门限：recall@1 ≥ 0.75 / recall@3 ≥ 0.85
+              / recall@5 ≥ 0.95。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">eval/eval.test.ts</span><span class="meta">171 行 · 门限断言测试（npm run eval 入口）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>场景运行器 runScenario（走 IndexCache，与生产召回同路径）；断言 helper。</td>
+          </tr>
+          <tr>
+            <td>41-110</td>
+            <td>
+              G1 recall@1 ≥ 0.95 / G2 ≥ 0.90 / G3 ≥ 0.80 / G4 热度记忆排第 1 / G5 参数网格（k1×b×heatHalfLifeMs 27
+              组合）默认组不劣于任何组合（oracle 判定；b=0.5 全组合 recall@1 塌缩为 0 反证默认 b=0.75 最优）。
+            </td>
+          </tr>
+          <tr>
+            <td>111-171</td>
+            <td>
+              <b>G6 真实数据门</b>：真实语料还原度守卫（324 条/329 条锚点命中）+ recall@1/3/5 门限断言；报告场景追加 G6
+              段落；版本自动注入。六门限（G1-G5）+ G6 = 七门限全绿。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">eval/realdata/ 语料资产</span
+          ><span class="meta">MANIFEST.md 24 行 + path.md 16915B + os.md 37124B</span>
+        </div>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>MANIFEST.md</td>
+            <td>
+              语料来源/版本（Node.js v26.10.0）/快照 URL/SHA-256/字节数清单 +
+              一致性声明与扩展指引（新增语料必须固化哈希）。
+            </td>
+          </tr>
+          <tr>
+            <td>path.md / os.md</td>
+            <td>
+              固化语料（逐字节不可变，prettier ignore），Node 官方 API
+              文档快照：路径/系统模块的函数、参数、返回值、代码示例——真实文档形态（标题/描述/代码块混合）验证插件对接真实数据的召回。
+            </td>
+          </tr>
+        </table>
+
+        <div class="filehead">
+          <span class="fn">bench/recall.bench.ts</span
+          ><span class="meta">197 行 · vitest bench 性能基准（不进 CI）</span>
+        </div>
+        <table>
+          <tr>
+            <th>行号</th>
+            <th>内容要点</th>
+          </tr>
+          <tr>
+            <td>1-40</td>
+            <td>语料生成（1K/10K 条目，固定 seed）；基准分组声明（冷查询/热查询/构建/裁剪/缓存）。</td>
+          </tr>
+          <tr>
+            <td>41-110</td>
+            <td>
+              <b>8 项基准</b>：1K/10K buildIndex、1K/10K queryIndex（冷）、token 预算裁剪、IndexCache 热命中（revision
+              不变）、热度更新复用（revision 变指纹不变）、BM25 vs cosine top@1 质量对比。
+            </td>
+          </tr>
+          <tr>
+            <td>111-197</td>
+            <td>
+              <b>质量对比可观察</b>（0.7.0 U6）：vitest bench 的 afterAll 不执行，故任务内
+              <code>process.stdout.write('[bench] BM25 0.4 top@1 命中率: 80/80 = 100.00%')</code> 真实落
+              stdout（去重）；cosine 基线 0/80 = 0%；量化 0.3→0.4 检索质量跃升。
+            </td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S5 ============ -->
+      <section id="s5">
+        <h2>5 test/ 逐文件详解（4682 行 · 325 项全覆盖）</h2>
+        <p>
+          31 个测试文件按版本演进组织，构成「单元 → 集成 → 加载冒烟 → 生命周期 → 薄弱项专场」五层纵深。核心结构：<code
+            >test/memory/</code
+          >
+          22 个 + <code>test/tools/</code> 4 个 + 根级 5 个（errors-0.7 / index-lifecycle-0.8 / load / load-0.3 /
+          upgrade-0.9）。
+        </p>
+
+        <h3>5.1 基础单元（test/memory/ 与 test/tools/ 核心）</h3>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>行数</th>
+            <th>覆盖要点</th>
+          </tr>
+          <tr>
+            <td><code>types.test.ts</code></td>
+            <td>~110</td>
+            <td>
+              契约守卫：isMemoryEntry/parseMemoryEntry/toMemoryEntry 正反例、可选字段/未知字段、kind 枚举、closed
+              态边界。
+            </td>
+          </tr>
+          <tr>
+            <td><code>capture.test.ts</code> + <code>capture-evolve.test.ts</code></td>
+            <td>~260</td>
+            <td>
+              三提取器各 mode 行为、敏感过滤（NFKC/全角/云厂商 key 绕过）、preference/instruction/fact
+              判定、autoTags、0.2.0 逆向回归。
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>engine.test.ts</code> + <code>engine-evolve.test.ts</code> + <code>engine-0.3-quality.test.ts</code>
+            </td>
+            <td>~400</td>
+            <td>
+              tokenize 双路、空查询短路、稀有词 IDF、词频单调、排序与过滤、isDuplicate 预筛、budget
+              裁剪、大库召回一致性（P3-1）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>engine-0.4.test.ts</code></td>
+            <td>~180</td>
+            <td>
+              BM25 质量回归：长度归一化/词频饱和/评分可复算/NFKC
+              查询/停止词边界/纯停止词空结果/指纹缓存复用与重建/长文本 Jaccard 退化。
+            </td>
+          </tr>
+          <tr>
+            <td><code>engine-0.5.test.ts</code>（25 项）</td>
+            <td>~240</td>
+            <td>A1 变体生成与 0.5 折扣、A2 特征集/覆盖率阈值（0.45）/0.3 权重、MinHash 签名与独立测试引用。</td>
+          </tr>
+          <tr>
+            <td><code>heat-0.5.test.ts</code>（9 项）</td>
+            <td>~120</td>
+            <td>A4 半衰期冷却/复活循环、accessCount=0 恒 1、lastAccessAt 缺失不衰减、bumped() 同步更新。</td>
+          </tr>
+          <tr>
+            <td><code>significance-0.5.test.ts</code>（5 项）</td>
+            <td>~90</td>
+            <td>A3 kind×source 全部权重值锚定（5×2）、significance:false 关闭、显式记忆高于自动。</td>
+          </tr>
+          <tr>
+            <td><code>store.test.ts</code> + <code>store-evolve.test.ts</code></td>
+            <td>~450</td>
+            <td>append-only 两行、tombstone、compact 触发/自检、写失败错误码、并发写、circular 数据、旧文件兼容。</td>
+          </tr>
+          <tr>
+            <td><code>store-0.3.test.ts</code>（9 项）</td>
+            <td>~180</td>
+            <td>
+              先落盘后入内存、快照 Cache 脏标记、revision 版本号、removeMany 批量、mkdir 失败 STORE_WRITE_FAILED、目录
+              0700 仅新建、首写 0600。
+            </td>
+          </tr>
+          <tr>
+            <td><code>store-0.4.test.ts</code> + <code>store-quality-0.3.test.ts</code></td>
+            <td>~320</td>
+            <td>
+              损坏隔离留证（隔离文件到位+计数不变）、compact 自检 mismatch、exportAll→importAll 往返无损、size 诊断。
+            </td>
+          </tr>
+          <tr>
+            <td><code>metrics-0.3.test.ts</code>（3 项）</td>
+            <td>~80</td>
+            <td>全 0 快照、formatMetrics 格式、计数累加与快照隔离。</td>
+          </tr>
+          <tr>
+            <td><code>importer-0.6.test.ts</code>（19 项）</td>
+            <td>~330</td>
+            <td>
+              splitDocument 切块（标题/列表/段落聚合/索引行跳过/短块/截断）、extractSessionText
+              宽容解析/损坏行计数、kind 推断、内容哈希幂等（二次导入 added=0）、<b
+                >真实 README+CHANGELOG
+                端到端：导入→importAll→buildIndex→召回真实词（BM25/dsh-memory-hub/memory_recall）</b
+              >。
+            </td>
+          </tr>
+          <tr>
+            <td><code>text-0.7.test.ts</code>（11 项）</td>
+            <td>~210</td>
+            <td>词边界拼接（Use pnpm for installs）、中文/标点逐字节、嵌套递归、importer re-export 等价性。</td>
+          </tr>
+          <tr>
+            <td><code>ingest-0.7.test.ts</code>（7 项）</td>
+            <td>~130</td>
+            <td>空候选零副作用/敏感拒绝/窗口去重/窗口外不判重/字段组装+workspace/超长截断/workspace 缺省。</td>
+          </tr>
+          <tr>
+            <td><code>tools.test.ts</code> + <code>tools-0.3.test.ts</code> + <code>tools-evolve.test.ts</code></td>
+            <td>~420</td>
+            <td>四工具 schema、kind 过滤、metrics 计数注入、契约纯净（score 不落盘）、错误码、workspace 参数。</td>
+          </tr>
+        </table>
+
+        <h3>5.2 升维与薄弱项专场</h3>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>行数</th>
+            <th>覆盖要点</th>
+          </tr>
+          <tr>
+            <td><code>errors-0.7.test.ts</code>（11 项）</td>
+            <td>~190</td>
+            <td>
+              ErrorCodes 七码契约、MemoryHubError 构造、toMemoryHubError 包装、errorMessage 三分支（errors.ts 100%）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>engine-guard-0.8.test.ts</code>（18 项）</td>
+            <td>~220</td>
+            <td>
+              engine 18 处守卫/兜底：minhash 签名长度、覆盖率守卫、df=0 IDF 平滑、空查询、windowMs≤0、ttlDays≤0、未知
+              kind 兜底（engine branches 100%）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>store-fault-0.8.test.ts</code>（5+6 项）</td>
+            <td>~230</td>
+            <td>
+              <code>vi.mock('node:fs/promises')</code> 包装真实实现故障注入：compact 写失败/自检行数
+              mismatch/自检读失败/chmod 失败四类容错告警 + corrupt 幂等、Error 与 String 双分支、closed
+              后三操作抛错（store branches 100%）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>edge-0.8.test.ts</code>（12 项）</td>
+            <td>~200</td>
+            <td>capture 强弱信号分支、importer 非对象 JSON 行回落、toMemoryEntry 可选字段拷贝。</td>
+          </tr>
+          <tr>
+            <td><code>tools-render-0.8.test.ts</code>（12 项）</td>
+            <td>~230</td>
+            <td>
+              四工具 render 全分支白盒直调：status 空库/全形态/diagnostics 缺省、recall 零/多命中/token 预算、forget
+              removed/not found、store workspace/tags 清洗/截断边界（工具函数覆盖 → 100）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>index-lifecycle-0.8.test.ts</code>（11+3 项）</td>
+            <td>413</td>
+            <td>
+              <code>vi.hoisted</code> fakeStore + 真实 Context：正常/异常卸载、工具注册失败不阻断、store open
+              失败仅告警、prune 三路径（ttlDays≤0 早退/removeMany/逐个回退）、<b
+                >背压 256 边界（260 事件恰好 256 入库）</b
+              >、捕获失败链不中断、ttlDays 定时器注册/清理、<b>D 项捕获栅栏时序（慢 upsert）</b>、decay 开关分支（index
+              分支 70.21 → 85.07）。
+            </td>
+          </tr>
+          <tr>
+            <td><code>upgrade-0.9.test.ts</code>（14 项）</td>
+            <td>544</td>
+            <td>
+              <b>0.9.0 探针转正</b>：B（裸「务必/一定」conservative 捕获 + kind=preference +
+              词法派生一致性）、C（批内双候选同文→1 条 + rejectedDuplicate）、E（corrupt 幂等）/F（词边界）/G（isUser
+              说话者感知）/H（strict 遗忘）/J（workspace 全局共享语义）/K（签名预筛大查询）/L（autoTags false）/M（mode
+              三档）/N（热度合并回写抗刷 + flush 失败 errors++）/O（零拷贝快照）/Q（decay false 60 天记忆可召回 +
+              半衰期注入）——16 项薄弱项逐项锚定。
+            </td>
+          </tr>
+          <tr>
+            <td><code>load.test.ts</code> + <code>load-0.3.test.ts</code></td>
+            <td>~260</td>
+            <td>
+              真实 dsh
+              运行时加载冒烟：四工具注册、事件捕获串行、背压丢弃、启动导入成功可召回、路径不存在仅告警不阻断启动。
+            </td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S6 ============ -->
+      <section id="s6">
+        <h2>6 docs/ 与配置 / CI（3276 行全覆盖）</h2>
+
+        <h3>6.1 docs/ 14 篇文档逐篇定位</h3>
+        <table>
+          <tr>
+            <th>文档</th>
+            <th>行数</th>
+            <th>定位与内容</th>
+          </tr>
+          <tr>
+            <td>ARCHITECTURE.md</td>
+            <td>432</td>
+            <td>
+              架构总纲：版本演进总表（0.1.0-0.10.0）、市场空白论证（dsh-memory-evolve/noema/EverOS
+              对比）、技术选型、分层、数据模型、事件驱动捕获、召回与 token 预算、存储可靠性、可观测性、风险与约束。
+            </td>
+          </tr>
+          <tr>
+            <td>GROUND-0.10.md</td>
+            <td>147</td>
+            <td>
+              0.10.0 真实数据接地（G6）：动机（合成语料自证弱点）、数据来源可信度（Node v26.10.0
+              快照+SHA）、生产同路径接入（329 条记忆分布）、24
+              问句语义锚标注、门限设计（0.75/0.85/0.95）与实测（0.7917/0.8750/0.9583）、合成 vs 真实对比解读。
+            </td>
+          </tr>
+          <tr>
+            <td>DESIGN-0.9.md</td>
+            <td>192</td>
+            <td>
+              0.9.0 设计定稿：16 项薄弱项（P0×3/P1×6/P2×7）逐项设计（根因/语义变更点/硬约束映射/新增测试）、9
+              项硬约束全量映射表、实现顺序（P0→P1→P2）。
+            </td>
+          </tr>
+          <tr>
+            <td>LIFT-0.9.md</td>
+            <td>161</td>
+            <td>
+              0.9.0
+              落地审查：六前沿主题（漂移免疫词法/共享默认隔离/双尺度时间/写入路径工程化/签名候选预筛/契约显式化）、探针
+              B2/J1/Q1/C1/F1/N 实测证据、逐项代码位置（capture.ts:36-86 等）、实测结果（324 测试/branches 97.87）。
+            </td>
+          </tr>
+          <tr>
+            <td>QUALITY-0.9.md</td>
+            <td>87</td>
+            <td>
+              0.9.0 六道质量门实测：静态链/324 测试/覆盖率(100/97.87/100/100)/eval 六门限/bench 8
+              项/渲染错误码逐字节不变。
+            </td>
+          </tr>
+          <tr>
+            <td>LIFT-0.8.md</td>
+            <td>132</td>
+            <td>
+              0.8.0 全模块薄弱项升维（L1-L15）：index 生命周期、tools 输出契约、engine 守卫、store 容错、capture
+              强度词、importer/types 分支、断言提纯；基线 0.7.0 覆盖快照。
+            </td>
+          </tr>
+          <tr>
+            <td>QUALITY-0.7.md</td>
+            <td>156</td>
+            <td>
+              0.7.0 世界级质量升级：P0 守门虚设/P1 重复实现/P2 错误基础设施/P3 版本硬编码/P4 CI 缺口/P5 bench 死代码/P6
+              断言 69 处/P7 index 职责过大；U1-U9 落地实证逐项对照。
+            </td>
+          </tr>
+          <tr>
+            <td>REALDATA-0.6.md</td>
+            <td>164</td>
+            <td>
+              0.6.0 真实数据接入设计：背景缺口（仅在线两路径）、数据形态盘点（AGENTS.md/会话 JSONL）、纯函数
+              API（splitDocument/extractSessionText/inferKind/planImport）、关键语义、兼容性论证、测试验收。
+            </td>
+          </tr>
+          <tr>
+            <td>INNOVATION-0.5.md</td>
+            <td>193</td>
+            <td>
+              0.5.0 深度创新定稿：A1 模糊扩展（编辑距离≤1×0.5 折扣）、A2 MinHash（k=8 设计最终实现 k=16）、A3
+              价值感知（含 density 维度——实现阶段因与长度归一化冲突移除）、A4 热度生命周期、A5
+              评估套件；兼容性逐组论证。
+            </td>
+          </tr>
+          <tr>
+            <td>CENTURY-0.4.md</td>
+            <td>148</td>
+            <td>
+              0.4.0 世纪级升级：BM25 替换 cosine、NFKC 查询规范化、停止词、IndexCache 内容指纹、损坏隔离、compact
+              自检、exportAll；附录 A 基准数据（cosine 0% → BM25 100%，性能表）。
+            </td>
+          </tr>
+          <tr>
+            <td>EVOLUTION-0.3.md</td>
+            <td>167</td>
+            <td>
+              0.3.0 世界级升维：先落盘后入内存、快照缓存、IndexCache by revision、有界背压 256、Metrics
+              体系（含实施差异记录：扁平结构 vs 原嵌套设计、isDuplicate 预筛 0.08 上界推演）。
+            </td>
+          </tr>
+          <tr>
+            <td>EVOLUTION.md</td>
+            <td>106</td>
+            <td>
+              0.2.0 演进审查：P0（NFKC 绕过/assistant 提取器错用/score
+              污染契约/Math.random/并发风暴）、P1（类型前沿化/append-only 存储/TF·IDF/工具链）、P2。
+            </td>
+          </tr>
+          <tr>
+            <td>QUALITY-0.3.md</td>
+            <td>141</td>
+            <td>
+              0.3.0 质量前沿化清单：P1-1 空查询缺陷（score=0.01 恒正）、P1-2 mkdir 错误码、P1-3 目录 0700 副效应、P1-4
+              forget trim 一致性；P2 断言消除；P3 大库测试+bench。
+            </td>
+          </tr>
+          <tr>
+            <td>DEEP-AUDIT.md</td>
+            <td>212</td>
+            <td>
+              0.8.0 终态七维度审计：探针实验表（B2 裸「务必」失败/C1 批内重复/F1 粘连/Q1 1/4000/J1-J2 workspace
+              语义分裂）、16 项薄弱项清单（P0/P1/P2）、模块×维度矩阵、与 LIFT-0.8 边界。
+            </td>
+          </tr>
+        </table>
+
+        <h3>6.2 工程配置与 CI（8 文件 238 行）</h3>
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>行数</th>
+            <th>要点</th>
+          </tr>
+          <tr>
+            <td>package.json</td>
+            <td>75</td>
+            <td>
+              name/version 0.10.0/type module；scripts：build(typecheck+tsup)/lint/format:check/test(325
+              项+eval)/eval/bench/test:coverage/check(一键全检)/prepack 守护；peerDeps：cordis ^4.0.1-rc.1、dsh-tools
+              ^0.0.1-rc.1（pinned 官方 rc，兼容性声明）；dsh.bundle.patch=cordis.patch.yml。
+            </td>
+          </tr>
+          <tr>
+            <td>tsconfig.json</td>
+            <td>25</td>
+            <td>
+              strict + exactOptionalPropertyTypes + verbatimModuleSyntax + noUncheckedIndexedAccess + noImplicitReturns
+              等 14 项严苛开关；moduleResolution bundler。
+            </td>
+          </tr>
+          <tr>
+            <td>tsup.config.ts</td>
+            <td>14</td>
+            <td>entry src/index.ts；format esm；dts；clean；outDir lib。</td>
+          </tr>
+          <tr>
+            <td>vitest.config.ts</td>
+            <td>22</td>
+            <td>
+              include test/** + eval/**；coverage v8 provider；阈值冻结：lines ≥96.5 / functions ≥97 / branches ≥95 /
+              statements ≥96.5（与实测 100/100/97.89/100 同步）。
+            </td>
+          </tr>
+          <tr>
+            <td>eslint.config.js</td>
+            <td>36</td>
+            <td>
+              eslint 9 flat config；typescript-eslint recommendedTypeChecked；no-floating-promises
+              error（异步安全）；prettier 集成。
+            </td>
+          </tr>
+          <tr>
+            <td>.prettierrc.json</td>
+            <td>8</td>
+            <td>
+              semi:false / singleQuote / printWidth:120；.prettierignore 含 eval/realdata 与
+              eval/reports（语料逐字节冻结）。
+            </td>
+          </tr>
+          <tr>
+            <td>cordis.patch.yml</td>
+            <td>6</td>
+            <td>插件 bundle patch：insert 行 memory-hub/dsh-memory-hub 并入 profile 配置树（安装方式契约）。</td>
+          </tr>
+          <tr>
+            <td>.github/workflows/ci.yml</td>
+            <td>52</td>
+            <td>
+              node 18/20/22 三矩阵：quality job（typecheck/lint/test/build）+ coverage job（阈值守护）+ 独立
+              quality-eval job（npm run eval 含 G6，离线可复算）；bench 按设计不进 CI。
+            </td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- ============ S7 ============ -->
+      <section id="s7">
+        <h2>7 数据流与依赖分析</h2>
+
+        <h3>7.1 四条核心数据流</h3>
+        <div class="card">
+          <b>流 1 · 事件自动捕获（写入）</b>
+          <div class="flow">
+            session/event(user/message) ─┐ tools/result(exec) ─┤ → capture.ts 提取器（按 captureMode） │
+            extractFromUserMessage/Assistant/ToolResult ▼ candidate（kind/tags/source:auto/workspace） ▼ index.ts
+            有界队列（FIFO ≤256，丢弃最老）→ ingestCaptured(ingest.ts) ▼ 批内去重 → 敏感拦截(NFKC) →
+            窗口去重(isDuplicate) → 截断 → store.upsert ▼ appendFile 成功 → 内存 Map → revision++ / capturedTotal++
+          </div>
+        </div>
+        <div class="card">
+          <b>流 2 · Agent 显式召回（读取 + 热度回写）</b>
+          <div class="flow">
+            memory_recall(query, limit, maxTokens, kind, workspace) ▼ IndexCache(revision + 内容指纹
+            sha256，纯热度更新复用旧索引) ▼ engine.queryIndex：tokenize(NFKC) → BM25 → A1 变体 0.5 兜底 → A2
+            语义覆盖率(签名预筛) → workspace/kind 过滤 → A3 sig → A4 heat ▼ score 降序 → token 预算裁剪(≤800/8 条) →
+            MemoryHit[] ▼ render 文本+JSON 入上下文 / 命中 bump → heatDirty 合并回写(抗刷) → metrics
+          </div>
+        </div>
+        <div class="card">
+          <b>流 3 · 真实数据导入（0.6.0 启动接线）</b>
+          <div class="flow">
+            importSources{documents, sessionLogs}（用户配置，可选） ▼ readFile → planImport(importer.ts 纯函数) ▼
+            splitDocument(文档切块) / extractSessionText(会话 JSONL 宽容解析) → inferKindWithMode(mode 三档) /
+            inferSpeakerKind(isUser) → 敏感过滤 + 短块丢弃(maxChars 截断) → id = imp-${contentHash} ▼
+            store.importAll（幂等合并，重复导入新增 0；失败仅告警不阻断启动）
+          </div>
+        </div>
+        <div class="card">
+          <b>流 4 · 存储生命周期与迁移</b>
+          <div class="flow">
+            open（mkdir 0700 仅新建 → readFile → 逐行 parse，损坏行 → .corrupt 幂等留证） ▼ upsert/removeMany：tombstone
+            行 append 成功 → 内存变更 → revision++ / 置脏 ▼ compact（行数/条目数超 FACTOR×2 且 ≥64 行）：tmp + rename
+            原子重建 → 自检行数 ▼ exportAll() ⇄ importAll()：跨设备迁移往返无损（JSON 快照） close：等待捕获栅栏排空 →
+            存储关闭 → 汇总指标日志
+          </div>
+        </div>
+
+        <h3>7.2 模块依赖图（无循环依赖抽象层）</h3>
+        <table>
+          <tr>
+            <th>方向</th>
+            <th>依赖链</th>
+          </tr>
+          <tr>
+            <td>入口 → 核心</td>
+            <td>
+              index.ts → config / errors / memory{store,engine,capture,importer,ingest,text,metrics,types} /
+              tools（四工厂）
+            </td>
+          </tr>
+          <tr>
+            <td>工具层 → 核心</td>
+            <td>tools/memory-*.ts → memory{store,engine,types,metrics} + errors</td>
+          </tr>
+          <tr>
+            <td>核心纯函数层</td>
+            <td>
+              store → types + errors；engine → types（纯函数零 IO）；capture → types；importer → types + capture(kind
+              信号) + text；ingest → store + engine + capture + metrics + types；text 独立（被 index/importer 复用）
+            </td>
+          </tr>
+          <tr>
+            <td>外部依赖</td>
+            <td>
+              仅 @deepseek-ai/cordis（ctx.on/tools）、@deepseek-ai/dsh-tools（defineTool）、node
+              内置（fs/promises/crypto/path）——<b>零第三方运行时依赖</b>
+            </td>
+          </tr>
+          <tr>
+            <td>评估旁路</td>
+            <td>eval/* → src/memory{importer,engine,store,types}（生产同路径）；真实 dsh 类型仅在加载冒烟测试中依赖</td>
+          </tr>
+        </table>
+
+        <h3>7.3 关键机制要点（读码归纳）</h3>
+        <ul>
+          <li>
+            <b>BM25 公式</b>：<code
+              >Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df + 0.5)/(df + 0.5))</code
+            >，k1=1.2 / b=0.75；词频饱和 + 长度归一化解救精炼短记忆（bench：cosine top@1 0% → BM25 100%）。
+          </li>
+          <li>
+            <b>A1 容错</b>：编辑距离 ≤1 变体（Damerau-Levenshtein 四类单编辑）只在精确零命中时以 0.5
+            折扣兜底，绝不干扰精确排序。
+          </li>
+          <li>
+            <b>A2 语义</b>：英文 3-gram（带 ^/$ 边界）特征空间 + k=16 FNV-1a MinHash 签名；评分用精确覆盖率 |Q∩D|/|Q|
+            ≥0.45（零误差规避小特征集 MinHash 方差）以 0.3 权重兜底；0.9.0 使签名成为真实候选预筛（大查询先 O(K)
+            剪枝）。
+          </li>
+          <li>
+            <b>A3 价值</b>：instruction 1.25 &gt; decision 1.15 &gt; preference 1.05 &gt; fact 1.0 &gt; generic 0.95，×
+            explicit 1.1；Record 全键编译期拦截漂移。
+          </li>
+          <li>
+            <b>A4 热度</b>：heat = 1 + 0.1·log1p(accessCount)·exp(−Δ/halfLife)，Ebbinghaus 指数冷却/命中复活闭环；<b
+              >0.9.0 插件默认关闭评分衰减</b
+            >（recallDecayHalfLifeDays=0，与 ttlDays=0「永不过期」哲学对齐，60 天记忆真正可召回）。
+          </li>
+          <li>
+            <b>两级去重</b>：批内 batchSeen（瞬时）+ 库内窗口 isDuplicate（24h，内容哈希精确短路 + 长度窗口预筛 + 0.92
+            编辑距离阈值）。
+          </li>
+          <li><b>写一致性</b>：全部写路径先落盘后入内存，崩溃/失败零残留；删除走 tombstone 逻辑删，重开不加载。</li>
+          <li>
+            <b>隐私</b>：NFKC 归一化敏感过滤前置（全角 `ｐａｓｓｗｏｒｄ` 不可绕过）；文件 0600 首写生效、新建目录
+            0700、既有共享目录不被动；显式记忆同样拒绝敏感明文（SENSITIVE_CONTENT）。
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ S8 ============ -->
+      <section id="s8">
+        <h2>8 疑点与观察（遍历后的独立思考）</h2>
+        <table>
+          <tr>
+            <th>#</th>
+            <th>位置</th>
+            <th>疑点 / 观察</th>
+            <th>性质</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td>eval G5 参数网格</td>
+            <td>
+              b=0.5 全组合 recall@1 塌缩为 0、其余组合全 1.0——网格实际只有「b 在不在 0.75」两个结论，27
+              组网格区分度低；门限「默认不劣于任何组合」对 b 之外的 k1/半衰期几乎无压力，敏感性分析表面化。
+            </td>
+            <td>方法学观察</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>G6 真实数据门</td>
+            <td>
+              24 个查询由作者挑选、语义锚由作者标注（API
+              专名即锚），验证更接近「锚点命中率」而非「用户在自然语言下的真实提问」；recall@1 0.79
+              的含金量取决于锚的客观性。语料同作者维护，存在「语料-锚-查询」三方同源的自证明风险（虽有 SHA
+              固化防漂移）。
+            </td>
+            <td>方法学观察</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>engine.ts MinHash</td>
+            <td>
+              A2 评分用精确覆盖率而非 MinHash 估计（正确取舍），MinHash 仅在大查询预筛时生效（特征集 &gt;16）；但 0.9.0
+              预筛阈值 = 0.45×2/3 = 0.30，为保守下界——若真实覆盖率在 0.30-0.45 之间被预筛剪掉，理论上会漏掉本可 0.3
+              权重兜底的候选（文档称「评分语义不变」，实为近似：被剪文档不会进入精确评分）。
+            </td>
+            <td>潜在语义边界</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>index.ts 捕获模式</td>
+            <td>
+              assistant/message 在 balanced 下不产候选（仅 aggressive 摘要），而 tools/result 在 balanced
+              下提取事实——「工具结果类事实」与「助手结论」分属两条路径，captureMode 语义在 README
+              与代码间需要细读才一致。
+            </td>
+            <td>文档-代码对齐观察</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>store.ts 快照零拷贝</td>
+            <td>
+              list() 返回共享引用（0.9.0 O 项）——接口注释要求调用方不得修改；但 MemoryStore
+              接口对自定义实现无强制约束，若第三方实现返回副本则与引擎「替换数组」假设存在隐性契约依赖。
+            </td>
+            <td>接口隐含契约</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>index.ts 背压</td>
+            <td>
+              容量 256 的 FIFO
+              丢弃「最早期」任务——事件洪水时最新事件优先，与「越新越重要」的假设一致，但与「历史着重重放导入」场景（大量
+              importSources 启动导入）是否会挤占事件队列需实测；启动导入不走该队列（直接 importAll），无竞态。
+            </td>
+            <td>已核对无竞态</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td>导入 vs 自动捕获去重</td>
+            <td>
+              importer 幂等仅对 <code>imp-</code> id 生效；同一文本若先被自动捕获（randomUUID 后缀 id）再被 planImport
+              导入，会生成两条不同 id 的记忆（内容相同）——isDuplicate
+              是召回侧/捕获侧窗口去重，不覆盖导入路径，理论上可产生近重复对（召回时 BM25 会同时命中）。
+            </td>
+            <td>潜在重复路径</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td>0.10.0 断言「325 项」</td>
+            <td>
+              README/CHANGELOG/ARCHITECTURE 均写明 325 项 vs 版本报告 0.9.0「324 + G6 真实数据门」——加 1 项 G6
+              用例的一致性可复核，但 G6 实际由 lib 运行器按场景断言，实际计数以 vitest 运行为准。
+            </td>
+            <td>一致性核验项</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td>依赖方向</td>
+            <td>
+              importer.ts 依赖 capture.ts 的 kind 信号词——导入与实时捕获共享推断词面，0.9.0 后 strength
+              词表单源化使二者语义联动；若未来调整捕获词表，导入 kind 推断会同步漂移（当前为特性，非缺陷）。
+            </td>
+            <td>耦合观察</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td>评估可复算域</td>
+            <td>
+              eval 与 bench 均固定 seed + 纯函数，但 G6 依赖磁盘上 3 个语料文件（SHA 固化）与 ImportPlan
+              的稳定切块——语料字节变化会触发门禁红（有守卫），属预期行为；bench 不进 CI 是设计决策（环境抖动误报）。
+            </td>
+            <td>设计决策确认</td>
+          </tr>
+        </table>
+
+        <div class="note">
+          <b>遍历结论</b>：8401 行全部逐行读过。这是一个「契约极稳、纯函数优先、可复算至上」的插件工程：src 2740 行 100%
+          lines / 97.89% branches，唯一未覆盖分支集中在 index.ts 84.06 与 recall 92.11
+          的防御兜底行（并行注册失败、render
+          缺省值、不可达保护），文档与代码在本报告核对范围内一致；核心疑点集中在评估方法学（G5 网格区分度、G6
+          锚标注主观性）与导入/捕获近重复边角，均不构成功能缺陷。
+        </div>
+      </section>
+    </div>
+    <footer>
+      dsh-memory-hub v0.10.0 全量逐行遍历报告 · 单文件 HTML · 覆盖 src / eval / bench / test / docs / 配置 / CI
+    </footer>
+  </body>
+</html>

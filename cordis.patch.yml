@@ -1,0 +1,6 @@
+# 插件注册 patch：安装 dsh-memory-hub 后，以 bundle 行并入 profile 配置树。
+# 参考官方《打包与安装插件》：bundle 的 patch 是插入插件行的 YAML 数组，
+# 插件行按包名引用，Node 模块解析会找到已安装的 bundle 代码。
+- insert:
+    - id: memory-hub
+      name: dsh-memory-hub

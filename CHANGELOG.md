@@ -2,6 +2,57 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-10-06
+
+### Added（认知升维：记忆层次蒸馏 + 时间感知巩固 + 时序知识图谱 + 信念冲突共存，方案全文见 `docs/DESIGN-1.1.md`）
+
+- **模块 A —— 记忆层次蒸馏**（`distillMode` 配置，默认 off 零行为变化）：空闲批处理把重复行为/偏好簇蒸馏为**抽象原则**（`distilled-layer:abstract`）、指令簇蒸馏为**规则约束**（`distilled-layer:procedural`），产物带 `distilled-from:<源id>` 证据链引用；`memory_recall(expand: true)` 命中蒸馏条目时向下展开源记忆（`hits[].expanded`，无效源自动跳过），缺省不展开输出与 1.0.0 逐字节一致；阈值 `distillMinCluster`（最小簇成员数）可调；
+- **模块 B —— 认知巩固与遗忘曲线**（`consolidationMode` 配置 + `recallThreshold`，默认 off 零行为变化）：Ebbinghaus 间隔重复语义的记忆强度模型（`R(t) = strength × e^(−Δt/τ)`，强度越高遗忘越慢），空闲窗口对有到期（due）高价值条目执行巩固复习（协议内更新访问历史，不新增字段、不改内容）；`memory_recall(reinforce: true)` 支持客户端显式巩固；`memory_status` 输出 `dueCount` / `strengthSummary`（consolidationMode=auto 时）；
+- **模块 C —— 时序知识图谱第四召回线**（`graphEnabled` 配置 + `graphMaxEntities`，默认 false 零行为变化）：零依赖规则引擎从记忆内容抽取中英主观三元组（`ruleExtractTriples`），`TemporalGraph` 运行时增量维护邻接表（含 supersede 时序失效边语义，`asOf` 时间点可回放）；召回四线融合新增**图谱线**（邻域扩展 + 度数归一 + hop 衰减），词面全零但图可达的条目可被补录；`memory_status` 输出图谱统计（entities/edges/activeEdges/supersededEdges/evicted）；
+- **模块 D —— 信念修正与矛盾共存**（`conflictMode` 配置，默认 off 零行为变化）：弱化对立信号（不再/禁止/no longer…）且相似相近的疑似反转事实**并存**而非静默删除，`conflicts-with:<旧id>` / `conflict-of:<新id>` 双向标注（tags 协议，MemoryEntry 契约零变更）；召回时冲突双方**都保留**且按时间锚定新者优先（`conflictAwareOrder`），命中条目输出 `conflicts` 显式标注（模块 D3）；与 1.0.0 supersede 强对立词表互斥（"改用 X"只走取代不打矛盾标）；`memory_status` 输出 `conflictPairs` 计数 + 样本；
+- **四线融合与可观测（1.1.0）**：词面 / 容错 / 语义 / **图谱** 四线融合（interpolate 图分叠加 / rrf 补录候选，旧路径逐字节兼容）；metrics 新增 9 个可选计数（`distilled*` / `consolidated` / `consolidationDue` / `graphEdges` / `graphHits` / `conflictPairs`）；`src/memory/cognitive.ts` 聚合 A-D 的空闲维护入口（启动空闲 + 卸载栅栏）；
+- **评估方法论升维（`eval/` + `bench/`，门禁全绿）**：
+  - **G9 蒸馏门禁**（`eval/distill.test.ts`）：可复算、源可追踪率 100%、分层准确（行为/偏好簇→abstract、指令簇→procedural）、冲突簇 0 蒸馏守卫、召回展开=有效源引用数；
+  - **G10 图谱门禁**（`eval/graph.test.ts`）：中英混合三元组抽取召回 ≥ 80%、图召回命中（graphHits > 0）、zero-hop/2-hop 词面全零补录（含 supersede 时间线）、增量 add 与 buildGraph 全量对拍一致、缺省 false 零行为回归；
+  - **G11 巩固门禁**（`eval/consolidation.test.ts`）：100 步模拟时间轴收敛（巩固后 R(t) 不落 < 0.2，对照不巩固则跌落）、间隔拉伸 ≥ 1.5×、off 缺省逐字节一致、存储纯净（零新字段）；
+  - **G12 冲突并存门禁**（`eval/conflict.test.ts`）：对立重建 / 数据更新 / 指令止损 / 真假矛盾夹具，检出精度与互斥性断言；`supersede` 与 `conflict` 打标互斥；
+  - **零行为回归断言**（`eval/bit-exact.test.ts`）：默认配置与 1.0.0 在配置/召回/入库/模块/工具五面**逐字节等价**；
+  - **bench 扩展**：`bench/knowledge-graph.bench.ts`（10K 全量/增量图构建、邻域扩展 P95）、`bench/distill.bench.ts`（1K/10K 蒸馏批处理、expandDistilled 展开），`npm run bench` 可复算。
+
+### Changed（维护与一致性）
+
+- 既有 327 项测试保持通过并扩展至 **439 项**（新增 112）：tools-1.1（7 项工具新参数断言：expand 展开与无效源跳过、conflicts 输出与 conflictAwareOrder、graphEnabled 图线启用/未注入不生效、reinforce=false/asOf 只读热度语义）+ 四个 1.1.0 模块单元测试 + eval G9-G12 门禁与 bit-exact 回归（合计 56 项 eval 断言全绿）；check 链（verify:realdata + typecheck + lint + format:check + test）全绿；
+- lint/格式净化：移除 `src/index.ts` 三处窄化后多余的类型断言与测试侧一处断言，eslint 9 + prettier 零告警；
+- `.tgz` 插件包/`npm pack` 产物随版本号同步为 `dsh-memory-hub-1.1.0.tgz`；README / ARCHITECTURE / CHANGELOG 版本声明一致。
+
+### 兼容性
+
+- **MemoryEntry 持久化契约零变更**（id/kind/content/tags/source/sessionId?/workspace?/createdAt/updatedAt/accessCount/lastAccessAt? 字段不变），一切新机制走 tags 协议 + 独立运行时索引；
+- 四工具签名与输出 schema **不破坏性变更**：仅新增**可选**参数（recall `expand`/`graphEnabled`/`reinforce`/`asOf`、status 可观测字段、store/forget graph/conflict 注入）与可选输出字段（`hits[].expanded`/`hits[].conflicts`、status `distilled`/`graph`/`dueCount`/`strengthSummary`/`conflictPairs`），旧调用逐字节兼容（bit-exact 断言锁定）；
+- 1.1.0 新能力**默认关闭**（distillMode=off / consolidationMode=off / graphEnabled=false / conflictMode=off），未配置时行为与 1.0.0 完全一致；零新增运行时第三方依赖（纯函数 + node 内置）。
+
+## [1.0.0] - 2026-10-06
+
+### Added（世纪升维：记忆生命周期与冲突感知 + 双引擎混合检索 + 指纹去重根治 + 可观测性，方案全文见 `docs/DESIGN-1.0.md`）
+
+- **模块 A1 —— supersede 取代协议**（`supersedeMode` 配置，默认 off 零行为变化）：自动识别"取代旧约定"的对立信号（语义单一事实源词表，importer/capture 派生不可漂移），被取代记忆（tags 含 `superseded-by:`）召回时按系数衰减（`supersededPenalty` 可调，1.0 = 关闭降权）；同现去重剔除被取代条目，`recall`/`status` 状态可见；
+- **模块 A2 —— 主题自动聚类运行时视图**（`themes` 配置）：`status` 输出聚合主题视图（memory_count/token/updated 统计），无持久化、零模式变更；
+- **模块 A3 —— 价值感知自动淘汰**（`maxEntries` + `autoEvict`）：超出上限时按价值分淘汰最有价值记忆（冷热分 + 显著性强弱），instruction 类记忆永不自动淘汰；
+- **模块 B —— 双引擎混合检索**（`semanticBoost`/`fusionMode` 配置，默认关闭零行为变化）：词面线（BM25）/ 容错线（fuzzy）/ 语义线（MinHash 覆盖率）三线评分 + `interpolate`（线性插值）或 `rrf`（Reciprocal Rank Fusion，k=60）融合；
+- **模块 C —— UF-1.0 统一内容指纹**：写入路径统一指纹协议 + 导入前库内跨 id 前缀去重（疑点 7 闭环），捕获/记忆库/导入三路同源；
+- **模块 D —— 可观测性升维**：`status` 输出覆盖率/安全垫量化、召回链路 stage 流水、配置快照，四工具输出重构；
+- **模块 E —— 评估方法论升维**（`eval/`，门禁全绿）：
+  - **G5 参数网格 4 维 81 组**：默认参数组每维不劣于任何组合 + b 三档（0.5/0.75/0.9）spread ≥ 0.02，杜绝"网格塌缩"；
+  - **G6 真实数据接地扩至四份语料 / 49 问句**：Node.js v26.10.0 官方 tag path / os / fs / stream 快照（SHA-256 固化 `MANIFEST.md`），每问句语义锚 ≥ 2 + 盲验守卫（top5 至少一条锚命中），门限 recall@1 ≥ 0.75 / @3 ≥ 0.85 / @5 ≥ 0.95；
+  - **G7 鲁棒性好文辞**：大小写 / 全角 / 空白 / 标点 / 错字五类扰动聚合退化 ≤ 5%；
+  - **G8 生命周期与聚类**：supersede 判定准确率 ≥ 0.9、被取代降权衰减、同现去重、主题聚类纯度 ≥ 0.85。
+
+### Changed（维护与一致性）
+
+- 既有 325 项测试保持通过并扩展至 **327 项**（新增 G7 鲁棒性 + G8 生命周期聚类两组门禁，eval 九个场景断言全绿）；check 链（verify:realdata + typecheck + lint + format:check + test）全绿，tsup / bench / npm pack 验证通过；
+- 检索质量评估报告升级为 v1.0.0（`npm run eval` 一键复算，G1–G8 全场景指标落盘）；
+- `.tgz` 插件包/`npm pack` 产物随版本号同步为 `dsh-memory-hub-1.0.0.tgz`；README / ARCHITECTURE / CHANGELOG 版本声明一致。
+
 ## [0.10.0] - 2026-10-05
 
 ### Added（真实数据接地，G6 真实数据门）

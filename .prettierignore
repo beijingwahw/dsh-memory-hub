@@ -1,0 +1,10 @@
+node_modules
+lib
+dist
+coverage
+package-lock.json
+*.tgz
+# 固化真实语料：必须逐字节保持不变，否则 MANIFEST 哈希一致性失效
+eval/realdata/
+# eval 生成物：每次运行时间戳变化
+eval/reports/
