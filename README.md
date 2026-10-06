@@ -142,7 +142,7 @@ BM25  = Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df +
 - **近似语义召回（A2）**：字符 3-gram 特征空间 + MinHash 签名缓存（LSH 剪枝资产），评分用零误差精确覆盖率规避小特征集 MinHash 方差——无外部 embedding 服务的本地语义层；
 - **记忆价值感知（A3）**：指令/决策/显式记忆显著性加权，纯函数常量权值可复算、可关闭；
 - **热度生命周期（A4）**：指数遗忘曲线冷却（默认半衰期 7 天），`用进废退`——冷却/复活闭环：命中即 `bumped()` 同步更新 `lastAccessAt`，久未访问的高频记忆恢复出头机会；
-- **离线质量评估套件（A5 + 0.10.0 G6 真实数据门）**：固定 seed 黄金语料（精确/模糊/语义/热度四场景）+ recall@k/MRR/NDCG 指标 + k1×b×半衰期 27 参数网格敏感性 + **真实官方文档语料（Node.js v26.10.0 快照）经生产同路径入库的 G6 真实数据门**，`npm run eval` 一键复算并生成 Markdown 报告；
+- **离线质量评估套件（A5 + 0.10.0 G6 + 1.0.0 G5/G7/G8 + 1.1.0 G9-G12）**：固定 seed 黄金语料（精确/模糊/语义/热度四场景）+ recall@k/MRR/NDCG 指标 + 4 维 81 组参数网格敏感性（G5：k1×b×heatHalfLifeMs×semanticWeight）+ **真实官方文档语料（Node.js v26.10.0 快照）经生产同路径入库的 G6 真实数据门**（G7 五类扰动鲁棒性 / G8 生命周期聚类 / G9-G12 蒸馏·图谱·巩固·矛盾共存认知门禁），`npm run eval` 一键复算并生成 Markdown 报告；
 - **零拷贝快照（0.9.0）**：`list()` 直接返回已排序共享缓存引用，写操作置脏后下次访问重建新数组（copy-on-write），读路径 O(1) 零拷贝、外部修改不污染新状态，高频召回/状态查询零浪费；
 - **运行指标体系（`HubMetrics`）**：捕获入库 / 显式存储 / 召回次数与命中 / 遗忘 / 敏感拒绝 / 去重拒绝 / TTL 清理 / 背压丢弃 / 错误十项计数；`memory_status` 实时快照、卸载时汇总输出，健康度一目了然；
 - **Unicode 归一化安全**：敏感检测先做 NFKC 归一化 + 小写折叠，全角/异体字符（`ｐａｓｓｗｏｒｄ`）无法绕过过滤；
@@ -167,7 +167,7 @@ npm run eval         # A5 离线质量评估（黄金语料 + 参数网格 + G1-
 npm run test:coverage # vitest 覆盖率（含阈值守护：lines ≥96.5 / branches ≥95 / functions ≥97）
 npm run check        # 一键全检：verify:realdata + typecheck + lint + format + test
 npm run build        # tsup 产出 ESM + d.ts 到 lib/
-npm run bench        # vitest bench 性能基准（知识图谱 10K 构建/P95、蒸馏批处理）
+npm run bench        # vitest bench 性能基准（recall 召回/索引 0.4.0、知识图谱 10K 构建/P95、蒸馏批处理）
 npm pack             # 产出 dsh-memory-hub-1.1.0.tgz
 ```
 
@@ -181,6 +181,7 @@ dsh-memory-hub/
 │   ├── errors.ts             # MemoryHubError + 稳定错误码 + errorMessage/toMemoryHubError（统一错误基础设施，0.7.0）
 │   ├── memory/
 │   │   ├── types.ts          # MemoryEntry 契约 + 运行时守卫（isMemoryEntry/parse/to）+ RecallOptions
+│   │   ├── entry-factory.ts  # 1.0.0 统一记忆条目工厂（id 组装/tags 清洗/截断/workspace 注入/时间戳单一语义，三写入路径共用）
 │   │   ├── store.ts          # append-only JSONL + tombstone + removeMany + compact 自检 + exportAll + 损坏行隔离留证
 │   │   ├── engine.ts         # 倒排索引 + BM25 + A1 容错变体 + A2 语义特征/MinHash + A3 价值加权 + A4 热度生命周期 + IndexCache（纯函数）
 │   │   ├── importer.ts       # 0.6.0 真实数据接入（Markdown 切块 / 会话 JSONL 提取 / kind 推断 / 幂等规划，纯函数）
@@ -195,19 +196,22 @@ dsh-memory-hub/
 │   │   └── cognitive.ts      # 1.1.0 A-D 认知模块入口聚合 + 空闲巩固/蒸馏调度
 │   └── tools/                # memory_store / recall（含 kind 过滤 + 1.1.0 expand/graphEnabled/reinforce/asOf）/ forget / status（+ 1.1.0 distilled/graph/dueCount/conflictPairs 可观测）
 ├── eval/                     # A5 离线质量评估套件（corpus 黄金语料 / realdata 真实数据门 G6 / metrics 指标 / G1-G12 门限测试，1.1.0 含 bit-exact 零行为回归）
-├── bench/                    # 1.1.0 vitest bench 性能基准（知识图谱 10K 构建/P95、蒸馏 1K/10K 批处理）
+├── bench/                    # vitest bench 性能基准（recall 召回/索引 0.4.0、知识图谱 10K 构建/P95、蒸馏 1K/10K 批处理）
 ├── test/                     # 439 个单元 + 集成 + 加载冒烟测试（含 0.8.0/0.9.0 升维专场 + 1.1.0 工具新参数断言）
-├── docs/ARCHITECTURE.md      # 架构设计与市场空白论证（含 0.3.0→0.10.0 演进 + 1.0.0 世纪升维）
+├── docs/ARCHITECTURE.md      # 架构设计与市场空白论证（含 0.1.0→1.0.0 全版本演进 + 1.0.0 世纪升维）
 ├── docs/DESIGN-1.0.md        # 1.0.0 世纪升维设计（模块 A-D：生命周期/混合检索/指纹/可观测性）
 ├── docs/DESIGN-1.1.md        # 1.1.0 认知记忆系统设计（模块 A-D：蒸馏/巩固/时序图谱/矛盾共存 + G9-G12 门限）
 ├── docs/GROUND-0.10.md       # 0.9.0 → 0.10.0 真实数据接地（G6 真实数据门）方案与实测对比
-├── docs/LIFT-0.9.md          # 0.8.0 → 0.9.0 16 项薄弱项深度闭环审查与方案
-├── docs/QUALITY-0.9.md       # 0.8.0 → 0.9.0 全链质量门实测记录
+├── docs/LIFT-0.9.md          # 0.8.0 → 0.9.0 全模块薄弱项升维审查与方案
+├── docs/QUALITY-0.9.md       # 0.9.0 质量报告（全链质量门实测）
+├── docs/DESIGN-0.9.md        # 0.9.0 创新升维设计方案（16 项薄弱项闭环）
+├── docs/DEEP-AUDIT.md        # 0.8.0 终态全模块薄弱项七维度深度审计
 ├── docs/LIFT-0.8.md          # 0.7.0 → 0.8.0 全模块薄弱项升维审查与方案
 ├── docs/QUALITY-0.7.md       # 0.6.0 → 0.7.0 世界级代码质量升级审查与方案
 ├── docs/INNOVATION-0.5.md    # 0.4.0 → 0.5.0 深度创新升级方案（A1-A5 设计定稿）
 ├── docs/REALDATA-0.6.md      # 0.5.0 → 0.6.0 真实数据接入层设计方案
 ├── docs/CENTURY-0.4.md       # 0.3.0 → 0.4.0 世纪升级审查与方案
+├── docs/QUALITY-0.3.md       # 全量代码质量前沿化进化方案
 ├── docs/EVOLUTION-0.3.md     # 0.2.0 → 0.3.0 世界级升维审查与方案
 ├── docs/EVOLUTION.md         # 0.1.0 → 0.2.0 演进审查方案
 ├── .github/workflows/ci.yml  # GitHub Actions CI（node 18/20/22 × 全检 + coverage + quality-eval 门限）
