@@ -1,5 +1,15 @@
 # dsh-memory-hub
 
+**[简体中文](README.md) | [English](README.en.md)**
+
+![version](https://img.shields.io/badge/version-1.1.0-2f6feb)
+![license](https://img.shields.io/badge/license-MIT-31c48d)
+![typescript](https://img.shields.io/badge/TypeScript-strict-3178C6)
+![tests](https://img.shields.io/badge/tests-439-0ea5e9)
+![coverage](https://img.shields.io/badge/coverage-%E2%89%A596.5%25-16a34a)
+![local-first](https://img.shields.io/badge/local--first-zero--cloud-orange)
+![event-driven](https://img.shields.io/badge/event--driven-pure--incremental-7c3aed)
+
 > **DeepSeek Harness 智能会话记忆中心** —— 让 Harness 越用越懂你。
 
 `dsh-memory-hub` 是 DeepSeek Harness（dsh）的**本地优先、事件驱动**的跨会话记忆插件：它自动捕获会话中的用户偏好、工具执行结论，并以 4 个 Agent 可直接调用的工具提供显式记忆能力。新会话不再"从零开始"。
@@ -10,6 +20,33 @@
 - **隐私安全默认**：API Key、密码、JWT、私钥、数据库连接串等敏感模式一律拦截不入库；捕获仅针对真实用户输入，跳过插件注入与子代理上下文。
 
 > 为什么是"市面空白"：官方 v0.2 发布说明将"加入个性化的长期记忆"列为后续方向；社区现有记忆插件均为早期/未验证/依赖外部生态。差异点论证详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+
+---
+
+## 系统总览
+
+<div align="center">
+  <img src="assets/architecture-overview-zh.png" alt="dsh-memory-hub 总体架构：事件捕获层 → 本地记忆层（JSONL + 索引缓存）→ Agent 上下文与四工具" width="88%">
+  <br/>
+  <sub><b>图 1</b> 总体架构：dsh 事件与工具结果 → 捕获过滤 → append-only 本地记忆库 → 四工具供给 Agent 上下文</sub>
+</div>
+
+## 目录
+
+- [特性一览](#特性一览)
+- [自动捕获管线](#自动捕获管线)
+- [安装](#安装)
+- [配置](#配置)
+- [工具使用指南](#工具使用指南)
+- [召回质量设计](#召回质量设计)
+- [架构亮点](#架构亮点)
+- [存储与一致性模型](#存储与一致性模型)
+- [认知记忆系统](#认知记忆系统)
+- [开发](#开发)
+- [目录结构](#目录结构)
+- [隐私与安全](#隐私与安全)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
@@ -28,6 +65,18 @@
 | **双引擎混合检索（1.0.0）** | **词面（BM25）+ 容错（fuzzy）+ 语义（MinHash 覆盖率）三线评分**，`interpolate` 线性插值或 `rrf` Reciprocal Rank Fusion（k=60）融合（`semanticBoost` 开启时语义线叠加，默认关闭零行为变化）                                                                                                                                                                      |
 | **记忆认知层（1.1.0）**     | **层次蒸馏（模块 A）**：重复行为/偏好簇蒸馏为抽象原则、指令簇蒸馏为规则约束，`recall(expand)` 命中向下展开证据链；**巩固与遗忘曲线（模块 B）**：Ebbinghaus 间隔重复强度模型 + 空闲巩固调度；**时序知识图谱（模块 C）**：零依赖三元组抽取 + 第四召回线，词面全零但图可达条目可补录；**矛盾共存（模块 D）**：疑似反转事实并存显式标注、新者优先，修正时间线可回放 |
 | 离线评估                    | **黄金语料评估（A5）+ 真实数据门（0.10.0 G6 / 1.0.0 G7-G8）+ 认知门禁（1.1.0 G9-G12）**：recall@k / MRR / NDCG + 4 维 81 组参数网格 + 12 项门禁（G1-G12，含蒸馏/图谱/巩固/矛盾共存与零行为回归），`npm run eval` 一键可复算                                                                                                                                     |
+
+## 自动捕获管线
+
+<div align="center">
+  <img src="assets/capture-pipeline-zh.png" alt="自动捕获管线：用户消息/工具结果 → 捕获模式门控 → NFKC 归一化 → 敏感拦截（REJECT）→ 短文本丢弃 → kind 推断 → 内容哈希去重 → 追加 JSONL" width="88%">
+  <br/>
+  <sub><b>图 2</b> 事件驱动的捕获管线：从输入到入库的七道闸门，敏感内容与短文本在入口即被拦截</sub>
+</div>
+
+- **四档捕获力度**（`captureMode`）：`off`（完全关闭自动捕获）/ `conservative` / `balanced`（默认）/ `aggressive`；消息来源仅限真实用户输入，跳过插件注入与子代理上下文；
+- **敏感拦截零豁免**：API Key / JWT / 私钥 / 连接串等模式匹配前先经 **NFKC 归一化 + 小写折叠**，全角/异体字符（`ｐａｓｓｗｏｒｄ`）无法绕过；短文本（<8 字符）直接丢弃；
+- **内容级幂等入库**：`contentHash` 去重（24h 窗口内近似重复不再入库），kind 信号词推断（`preference` / `instruction` / `fact`）后追加写入 append-only JSONL，与显式 `memory_store` 三写入路径共用同一条目工厂（1.0.0）。
 
 ## 安装
 
@@ -90,9 +139,9 @@ memory-hub:
 - **隐私与质量零豁免**：导入内容同样过敏感模式拦截（NFKC 归一化）与短块（<8 字符）丢弃；文件路径不存在/读取失败仅告警，插件照常启动；
 - **未配置 `importSources` 时行为与 0.5.0 完全一致**（零导入），可随时增删路径后重载。
 
-## 工具使用指南（Agent 触发场景）
+## 工具使用指南
 
-这 4 个工具会自动暴露给模型，模型在以下场景应当调用：
+这 4 个工具会自动暴露给模型，模型在以下场景（Agent 触发场景）应当调用：
 
 - **`memory_store`**：用户说"记住……""以后都……"；或当一条决策/事实/偏好将影响未来会话时。
 - **`memory_recall`**：新会话开场（调用一次，用当前任务的关键词检索过往约定）；用户提到可能聊过的旧话题时；拼写/措辞记不准确时尤其有效（容错 + 语义兜底）；可用 `kind` 限定只召回某种类型；**1.1.0 可选参数**：`expand`（蒸馏条目命中时向下展开源记忆证据链）、`graphEnabled`（图谱线显式开关）、`reinforce`（巩固复习语义，命中即模拟一次成功召回）、`asOf`（时间点回放只读召回，不更新热度）。
@@ -101,7 +150,13 @@ memory-hub:
 
 工具输出均为**结构化 JSON + 一段文本渲染**，可直接进入上下文，token 开销受预算控制。
 
-## 召回质量设计（0.5.0）
+## 召回质量设计
+
+<div align="center">
+  <img src="assets/recall-scoring-zh.png" alt="召回评分流程：NFKC 归一化 → 词面 BM25 / 容错编辑距离 / 语义 MinHash 覆盖 / 时序图谱四线评分 → interpolate/RRF 融合 → 时间衰减×热度×价值加权 → 排序与 token 预算裁剪" width="88%">
+  <br/>
+  <sub><b>图 3</b> 召回评分的四线并行结构与融合链路（0.5.0 三线 + 1.1.0 时序图谱第四线）</sub>
+</div>
 
 ```
 score = BM25(query, memory) × 时间衰减(半衰期 7 天) × 热度(生命冷却) × 价值感知(类型/来源)
@@ -119,7 +174,7 @@ BM25  = Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df +
 - 命中即热度 +1 并更新最近访问时间（仅契约字段落盘，运行时 `score` 绝不写入存储）；
 - 评分基准时间与全部参数（k1/b/半衰期/开关）可注入（同一基准下结果可复算），便于测试与批量评估（`npm run eval`）。
 
-## 架构亮点（前沿技术要素）
+## 架构亮点
 
 - **真实数据接入（0.6.0）**：`src/memory/importer.ts` 纯函数导入层——Markdown 记忆文档切块（标题/列表/段落聚合、索引行跳过）、会话 JSONL 宽容解析（user/assistant 事件、损坏行计数不阻断）、内容哈希幂等 id（`imp-${contentHash}`，跨来源/跨时间自动合并）、kind 信号词推断、敏感过滤与 maxChars 截断零豁免；插件可选配置 `importSources` 启动导入，失败仅告警不阻断，未配置时行为与 0.5.0 完全一致；
 - **统一错误基础设施（0.7.0）**：`errorMessage` 为全局唯一错误信息入口（`MemoryHubError` → `CODE: message` 保留稳定错误码、Error → message、其余 → String 兜底），入口 9 处告警日志统一；错误码契约（`ErrorCodes`）与 `toMemoryHubError` 全部有 100% 覆盖的专项测试；
@@ -154,6 +209,32 @@ BM25  = Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df +
 - **可扩展存储**：存储层实现 `MemoryStore` 接口，新增能力（`removeMany`/`revision`/`diagnostics`/`exportAll`）均为可选成员，未来可无侵入替换为 SQLite / 向量库 / MCP 后端；
 - **错误分级**：统一 `MemoryHubError`（稳定错误码 EMPTY_CONTENT / SENSITIVE_CONTENT / STORE_CLOSED / STORE_WRITE_FAILED / STORE_READ_FAILED / …），工具侧可编程处理；
 - **防御式运行**：存储打开失败不阻塞插件加载；事件负载解析失败仅告警；损坏 JSONL 行自动跳过并计数。
+
+## 存储与一致性模型
+
+<div align="center">
+  <img src="assets/storage-model-zh.png" alt="存储模型：写路径 append-only JSONL（磁盘优先）→ tombstone 逻辑删除 → compact 原子重建；MemoryEntry 九字段契约 + IndexCache 内容指纹失效；读路径零拷贝快照 + 倒排索引召回" width="88%">
+  <br/>
+  <sub><b>图 4</b> 存储模型：磁盘先行、逻辑删除、原子重建与零拷贝读路径</sub>
+</div>
+
+- **写路径（disk-before-memory）**：所有写操作先 `appendFile` 成功、再变更内存 Map，崩溃/写失败零残留；删除走 tombstone 逻辑标记（`removeMany` 批量），compact 达阈值触发 tmp + rename 原子重建并自检行数；
+- **读路径（零拷贝）**：`list()` 直接返回已排序共享缓存引用（copy-on-write），外部修改不污染新状态；召回按存储 `revision` + 内容指纹（sha256）失效 IndexCache，语料未变时 O(查询) 完成；
+- **契约与迁移**：`MemoryEntry` 九字段运行时类型守卫、运行时 `score` 永不落盘；损坏行自动隔离留证（`.corrupt`）+ `exportAll` / `importAll` 无损迁移闭环；隐私文件权限 0600、目录 0700。
+
+## 认知记忆系统
+
+<div align="center">
+  <img src="assets/cognitive-memory-zh.png" alt="认知记忆系统：MemoryStore 契约不变，环绕四大模块——层次蒸馏、认知巩固与艾宾浩斯遗忘曲线、时序知识图谱、矛盾共存，均默认关闭零行为变化；底部 memory_status 提供已蒸馏/到期数量/图谱统计/冲突对可观测" width="88%">
+  <br/>
+  <sub><b>图 5</b> 1.1.0 认知记忆系统：四模块以 MemoryStore 为核心辐射，全部默认关闭 = 零行为变化</sub>
+</div>
+
+- **层次蒸馏（模块 A）**：重复行为/偏好簇归纳为抽象原则、指令簇蒸馏为规则约束（`distillMinCluster=3` 防伪原则），`distilled-from` 证据链沉淀，`recall(expand)` 命中向下展开原始记忆；
+- **认知巩固与遗忘曲线（模块 B）**：Ebbinghaus 间隔重复强度模型 `R(t)=strength·e^(−Δt/τ)`，空闲批处理对到期高价值记忆巩固复习，协议内更新访问历史、零新字段（`recallThreshold=0.4` 控制入队）；
+- **时序知识图谱（模块 C）**：零依赖三元组抽取 + `TemporalGraph` 增量维护，成为第四召回线——词面全零但图可达条目可补录（`graphMaxEntities=2000` 防膨胀）；
+- **信念修正与矛盾共存（模块 D）**：疑似反转事实并存双向标注、召回双方保留且新者优先显式输出 `conflicts`，与 supersede 强对立词表互斥，修正时间线可随时间戳回放；
+- **零行为变化保证**：四个模块默认全部关闭（`distillMode`/`consolidationMode`/`graphEnabled`/`conflictMode`），`memory_status` 扩展输出 `distilled` / `dueCount` / `graph stats` / `conflictPairs` 可观测指标。
 
 ## 开发
 
