@@ -1,3 +1,16 @@
+async function rmRetry(dir: string): Promise<void> {
+  // Windows：dispose 后 store.close() 异步落盘/句柄释放与 rmSync 竞态（ENOTEMPTY/EBUSY）——指数退避重试
+  for (let i = 0; ; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch (err) {
+      if (i >= 5) throw err
+      await new Promise((r) => setTimeout(r, 50 * 2 ** i))
+    }
+  }
+}
+
 /**
  * 加载冒烟测试：在真实 dsh 运行时（cordis Context + dsh-tools ToolRegistry）中
  * 加载插件，验证 4 个工具注册、事件监听挂载、随插件卸载清理。
@@ -194,7 +207,8 @@ describe('dsh-memory-hub 加载', () => {
     expect((docHit2.hits ?? []).length).toBeGreaterThan(0)
 
     await fiber.dispose()
-    rmSync(dir, { recursive: true, force: true })
+    await new Promise((r) => setTimeout(r, 50))
+    await rmRetry(dir)
   })
 
   it('真实数据接入：导入源路径不存在时仅告警、不阻断插件启动（0.6.0）', async () => {
@@ -214,6 +228,7 @@ describe('dsh-memory-hub 加载', () => {
     const s = await statusTool.execute({})
     expect(s.total).toBe(0) // 无内容被错误导入
     await fiber.dispose()
-    rmSync(dir, { recursive: true, force: true })
+    await new Promise((r) => setTimeout(r, 50))
+    await rmRetry(dir)
   })
 })

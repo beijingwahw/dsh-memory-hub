@@ -1,3 +1,16 @@
+async function rmRetry(dir: string): Promise<void> {
+  // Windows：dispose 后 store.close() 异步落盘/句柄释放与 rmSync 竞态（ENOTEMPTY/EBUSY）——指数退避重试
+  for (let i = 0; ; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch (err) {
+      if (i >= 5) throw err
+      await new Promise((r) => setTimeout(r, 50 * 2 ** i))
+    }
+  }
+}
+
 /**
  * 覆盖率阈值回归修复二（1.3.0 工程纪律，续 coverage-1.3.test.ts）。
  *
@@ -321,7 +334,8 @@ describe('覆盖率回归二：插件入口分支（load 冒烟）', () => {
     }
     expect(total).toBeGreaterThan(0)
     await fiber.dispose()
-    rmSync(dir, { recursive: true, force: true })
+    await new Promise((r) => setTimeout(r, 50))
+    await rmRetry(dir)
   })
 
   it('存储打开失败（目录路径是文件）：不注册工具、不崩溃', async () => {
@@ -334,7 +348,8 @@ describe('覆盖率回归二：插件入口分支（load 冒烟）', () => {
     await new Promise((r) => setTimeout(r, 250))
     expect(ctx.tools.get('memory_store')).toBeUndefined()
     await fiber.dispose()
-    rmSync(dir, { recursive: true, force: true })
+    await new Promise((r) => setTimeout(r, 50))
+    await rmRetry(dir)
   })
 
   it('TTL 清理 + autoEvict 启动淘汰：超限与过期在启动时收敛', async () => {
