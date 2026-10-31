@@ -2,11 +2,11 @@
 
 **[简体中文](README.md) | [English](README.en.md)**
 
-![version](https://img.shields.io/badge/version-1.1.0-2f6feb)
+![version](https://img.shields.io/badge/version-1.5.1-2f6feb)
 ![license](https://img.shields.io/badge/license-MIT-31c48d)
 ![typescript](https://img.shields.io/badge/TypeScript-strict-3178C6)
-![tests](https://img.shields.io/badge/tests-439-0ea5e9)
-![coverage](https://img.shields.io/badge/coverage-%E2%89%A596.5%25-16a34a)
+![tests](https://img.shields.io/badge/tests-682-0ea5e9)
+![coverage](https://img.shields.io/badge/coverage-lines%E2%89%A598%25-16a34a)
 ![local-first](https://img.shields.io/badge/local--first-zero--cloud-orange)
 ![event-driven](https://img.shields.io/badge/event--driven-pure--incremental-7c3aed)
 
@@ -52,19 +52,23 @@
 
 ## 特性一览
 
-| 能力                        | 说明                                                                                                                                                                                                                                                                                                                                                            |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 显式记忆                    | `memory_store` 持久化决策 / 事实 / 偏好 / 指令，自动打标签、幂等 id                                                                                                                                                                                                                                                                                             |
-| 智能召回                    | `memory_recall` Okapi BM25 + **编辑距离 ≤1 容错（A1）** + **词根近似语义兜底（A2）** + **价值感知加权（A3）** + **热度半衰期冷却（A4）** + token 预算裁剪 + `kind` 过滤                                                                                                                                                                                         |
-| 事件自动捕获                | 用户消息 → 偏好/指令；工具成功结果 → 事实；四档模式（off / conservative / balanced / aggressive）                                                                                                                                                                                                                                                               |
-| **真实数据接入**            | **启动时批量导入 Markdown 记忆文件（AGENTS.md/MEMORY.md/USER.md…）与会话 JSONL 日志（0.6.0）**：内容级幂等去重、kind 推断、敏感过滤，`开箱即有记忆`                                                                                                                                                                                                             |
-| 遗忘与治理                  | `memory_forget` 按 id 删除；`memory_status` 统计概览 + 运行指标 + 存储诊断；TTL 批量过期清理                                                                                                                                                                                                                                                                    |
-| 本地可靠存储                | append-only JSONL + tombstone 逻辑删除 + compact 原子重建；**先落盘后入内存**，崩溃/写失败零残留                                                                                                                                                                                                                                                                |
-| 可观测运维                  | `HubMetrics` 十项运行指标（捕获/拒绝/召回/遗忘/错误/丢弃）；有界背压队列；优雅关闭汇总日志                                                                                                                                                                                                                                                                      |
-| **记忆生命周期（1.0.0）**   | **supersede 取代协议（模块 A1）**：检测"改用/升级到"对立信号，被取代记忆召回降权 + 同现去重；**主题聚类视图（A2）**：`status` 输出聚合主题；**价值感知淘汰（A3）**：超上限按价值分淘汰，指令永不被自动淘汰                                                                                                                                                      |
-| **双引擎混合检索（1.0.0）** | **词面（BM25）+ 容错（fuzzy）+ 语义（MinHash 覆盖率）三线评分**，`interpolate` 线性插值或 `rrf` Reciprocal Rank Fusion（k=60）融合（`semanticBoost` 开启时语义线叠加，默认关闭零行为变化）                                                                                                                                                                      |
-| **记忆认知层（1.1.0）**     | **层次蒸馏（模块 A）**：重复行为/偏好簇蒸馏为抽象原则、指令簇蒸馏为规则约束，`recall(expand)` 命中向下展开证据链；**巩固与遗忘曲线（模块 B）**：Ebbinghaus 间隔重复强度模型 + 空闲巩固调度；**时序知识图谱（模块 C）**：零依赖三元组抽取 + 第四召回线，词面全零但图可达条目可补录；**矛盾共存（模块 D）**：疑似反转事实并存显式标注、新者优先，修正时间线可回放 |
-| 离线评估                    | **黄金语料评估（A5）+ 真实数据门（0.10.0 G6 / 1.0.0 G7-G8）+ 认知门禁（1.1.0 G9-G12）**：recall@k / MRR / NDCG + 4 维 81 组参数网格 + 12 项门禁（G1-G12，含蒸馏/图谱/巩固/矛盾共存与零行为回归），`npm run eval` 一键可复算                                                                                                                                     |
+| 能力                           | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 显式记忆                       | `memory_store` 持久化决策 / 事实 / 偏好 / 指令，自动打标签、幂等 id                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 智能召回                       | `memory_recall` Okapi BM25 + **编辑距离 ≤1 容错（A1）** + **词根近似语义兜底（A2）** + **价值感知加权（A3）** + **热度半衰期冷却（A4）** + token 预算裁剪 + `kind` 过滤                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 事件自动捕获                   | 用户消息 → 偏好/指令；工具成功结果 → 事实；四档模式（off / conservative / balanced / aggressive）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **真实数据接入**               | **启动时批量导入 Markdown 记忆文件（AGENTS.md/MEMORY.md/USER.md…）与会话 JSONL 日志（0.6.0）**：内容级幂等去重、kind 推断、敏感过滤，`开箱即有记忆`                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 遗忘与治理                     | `memory_forget` 按 id 删除；`memory_status` 统计概览 + 运行指标 + 存储诊断；TTL 批量过期清理                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 本地可靠存储                   | append-only JSONL + tombstone 逻辑删除 + compact 原子重建；**先落盘后入内存**，崩溃/写失败零残留                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 可观测运维                     | `HubMetrics` 十项运行指标（捕获/拒绝/召回/遗忘/错误/丢弃）；有界背压队列；优雅关闭汇总日志                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **记忆生命周期（1.0.0）**      | **supersede 取代协议（模块 A1）**：检测"改用/升级到"对立信号，被取代记忆召回降权 + 同现去重；**主题聚类视图（A2）**：`status` 输出聚合主题；**价值感知淘汰（A3）**：超上限按价值分淘汰，指令永不被自动淘汰                                                                                                                                                                                                                                                                                                                                                                       |
+| **双引擎混合检索（1.0.0）**    | **词面（BM25）+ 容错（fuzzy）+ 语义（MinHash 覆盖率）三线评分**，`interpolate` 线性插值或 `rrf` Reciprocal Rank Fusion（k=60）融合（`semanticBoost` 开启时语义线叠加，默认关闭零行为变化）                                                                                                                                                                                                                                                                                                                                                                                       |
+| **记忆认知层（1.1.0）**        | **层次蒸馏（模块 A）**：重复行为/偏好簇蒸馏为抽象原则、指令簇蒸馏为规则约束，`recall(expand)` 命中向下展开证据链；**巩固与遗忘曲线（模块 B）**：Ebbinghaus 间隔重复强度模型 + 空闲巩固调度；**时序知识图谱（模块 C）**：零依赖三元组抽取 + 第四召回线，词面全零但图可达条目可补录；**矛盾共存（模块 D）**：疑似反转事实并存显式标注、新者优先，修正时间线可回放                                                                                                                                                                                                                  |
+| **推理升维（1.2.0）**          | **激活扩散推理线（模块 E，`inferEnabled`）**：spreading activation 工程化——查询实体沿图谱活跃出边多跳扩散（跳衰减 × 关系置信度 × 最旧边保守时效），最优路径链可回放（A—使用→B—依赖→C），asOf 时间线不可穿越失效关系，波束/链数双护栏有界；**召回溯源（模块 F，`explain`）**：每条命中附带 why——参与融合的召回线/各线贡献/权重因子，rrf 模式 Σ贡献 × lineBase 与最终分逐位精确相等                                                                                                                                                                                                |
+| **时空完备（1.3.0）**          | **情景回放（模块 G，`asOf`）**：回到任意过去时刻召回——append-only JSONL 日志按文件序纯函数回放（`replayAsOf`），得到该时刻的精确知识状态（存在性/内容版本/取代与矛盾标注/访问热度），图谱按回放语料重建 T 时刻图视图（未来条目的边不存在），只读不写热度；**推理证据链（模块 H，`why.chains`）**：溯源从「infer 线贡献了分」升维到「凭什么推理」——infer 线参与的命中附带至多 3 条可回放路径链                                                                                                                                                                                    |
+| **纵深防御·时间分析（1.4.0）** | **会话级加密存储（模块 I，`passphrase`/`DSH_MEMORY_PASSPHRASE`）**：记忆文件逐行 AES-256-GCM 认证加密落盘（scrypt 派生密钥 + 密钥记录头存盐，AAD 绑定格式版本）——静态保密（除头外零明文）+ 逐行防篡改（认证失败走损坏行隔离留证）；错口令/漏口令加载期显式失败；明文库原位加密迁移逐行原序重写（深回放历史完整保留）；compact 与加密共存；**时间分析（模块 J）**：`memory_status asOf` 历史快照视图（该时刻的记忆库统计，语料层封闭）+ `diffSince` T1↔T2 diff 视图（新增/消失/内容变更/取代矛盾/纯热度六类归因，确定性纯函数）                                                   |
+| **边界突破（1.5.0）**          | **口令轮换与解密回退（模块 K，`DSH_MEMORY_NEW_PASSPHRASE`）**：逐行原序重写保深回放历史，失败不毒化写链，多进程锁护栏；**图维时间对账（模块 L，`graphDiff`）**：T1↔T2 图视图实体/关系级边差集；**本地向量第六召回线（模块 M，`vectorEnabled`）**：零依赖确定性 HNSW（fnv1a 层指派 + 论文多样性近邻选择 + 底层 2M），与 A2 同特征空间 TF·IDF 余弦，RRF 第六条秩/interpolate 叠加/why 溯源 `vector` 线；**双语实体抽取（模块 N）**：英文技术关系面 + 宾语连词拆分 + node.js 专名保形；**记忆时间轴（模块 O，`timeline`）**：按天分桶的新增/删除/更新/热度事件流 + 存活总量柱状走势 |
+| 离线评估                       | **黄金语料评估（A5）+ 真实数据门（0.10.0 G6 / 1.0.0 G7-G8）+ 认知门禁（1.1.0 G9-G12）+ 推理门禁（1.2.0 G17-G18）+ 时空门禁（1.3.0 G19-G20）+ 纵深防御门禁（1.4.0 G21-G22）+ 边界突破门禁（1.5.0 G23-G25 / 1.5.1 G26）**：recall@k / MRR / NDCG + 4 维 81 组参数网格 + 26 项门禁（G1-G26，含蒸馏/图谱/巩固/矛盾共存/多跳推理/召回溯源/情景回放/加密零明文与回放 diff/HNSW 向量对拍与自检索/双语抽取/边界操作/可视化页自包含与注入安全、零行为回归与真实规模认知接地），`npm run eval` 一键可复算                                                                                  |
 
 ## 自动捕获管线
 
@@ -114,7 +118,10 @@ dsh plugin --profile web add ./dsh-memory-hub-1.1.0.tgz
 | `consolidationMode`   | `off`               | **1.1.0** 认知巩固调度：`off`（零变化）/ `auto`（对有到期的高价值记忆执行间隔重复巩固复习）              |
 | `graphEnabled`        | `false`             | **1.1.0** 时序知识图谱第四召回线（词面全零但图可达条目可补录；默认关闭零行为变化）                       |
 | `conflictMode`        | `off`               | **1.1.0** 矛盾共存识别：`off`（零变化）/ `auto`（疑似反转事实并存并双向标注）                            |
+| `conflictWindowMs`    | `30d`               | **1.1.1** 矛盾检测独立窗口（与 `dedupWindowMs` 解耦——信念反转常跨周，24h 窗会使跨周修正永远检测不到）    |
 | `graphMaxEntities`    | `2000`              | **1.1.0** 图谱实体上限（防止任意文本记忆无限膨胀图谱）                                                   |
+| `inferEnabled`        | `false`             | **1.2.0** 激活扩散推理第五召回线（沿图谱活跃出边多跳推理，最优路径链可回放；默认关闭零行为变化）         |
+| `inferMaxHops`        | `2`                 | **1.2.0** 推理链最大跳数（`1` 直接关系 / `2` 一跳中介推理；钳制 1..3）                                   |
 | `distillMinCluster`   | `3`                 | **1.1.0** 蒸馏最小簇成员数（低于该值不蒸馏，避免把孤例抽象成伪原则）                                     |
 | `recallThreshold`     | `0.4`               | **1.1.0** 巩固可召回率阈值（预测可召回率低于该值且高价值 → 进入巩固队列）                                |
 
@@ -144,9 +151,9 @@ memory-hub:
 这 4 个工具会自动暴露给模型，模型在以下场景（Agent 触发场景）应当调用：
 
 - **`memory_store`**：用户说"记住……""以后都……"；或当一条决策/事实/偏好将影响未来会话时。
-- **`memory_recall`**：新会话开场（调用一次，用当前任务的关键词检索过往约定）；用户提到可能聊过的旧话题时；拼写/措辞记不准确时尤其有效（容错 + 语义兜底）；可用 `kind` 限定只召回某种类型；**1.1.0 可选参数**：`expand`（蒸馏条目命中时向下展开源记忆证据链）、`graphEnabled`（图谱线显式开关）、`reinforce`（巩固复习语义，命中即模拟一次成功召回）、`asOf`（时间点回放只读召回，不更新热度）。
+- **`memory_recall`**：新会话开场（调用一次，用当前任务的关键词检索过往约定）；用户提到可能聊过的旧话题时；拼写/措辞记不准确时尤其有效（容错 + 语义兜底）；可用 `kind` 限定只召回某种类型；**1.1.0 可选参数**：`expand`（蒸馏条目命中时向下展开源记忆证据链）、`graphEnabled`（图谱线显式开关）、`reinforce`（巩固复习语义，命中即模拟一次成功召回）、`asOf`（情景回放时间戳，回到该时刻只读召回——只含当时存在的记忆与当时的内容/取代状态，不更新热度）；**1.4.0**：`memory_status` 亦有 `asOf`（历史快照统计）与 `diffSince`（与 asOf 组成 T1↔T2 diff 视图：新增/消失/内容变更/取代矛盾/纯热度）；**1.5.0 可选参数**：`vector`（启用本地 HNSW 向量第六召回线，逐次覆盖配置默认 `vectorEnabled`）；**1.2.0 可选参数**：`infer`（启用激活扩散推理线，逐次覆盖配置默认）、`explain`（输出每条命中的召回溯源 why：参与融合的召回线/各线贡献/权重因子；**1.3.0 起 infer 线参与的命中附带 `why.chains` 推理证据链**，路径逐边可回放）。
 - **`memory_forget`**：用户明确要求删除某条记忆时（id 来自 `memory_recall` / `memory_status`）。
-- **`memory_status`**：需要了解记忆库规模、分布、存储占用，或排查捕获/召回是否按预期运行时（含 `metrics` 与存储 `diagnostics`）。
+- **`memory_status`**：需要了解记忆库规模、分布、存储占用，或排查捕获/召回是否按预期运行时（含 `metrics` 与存储 `diagnostics`）；**1.4.0**：`asOf` 看历史时刻的库况、`diffSince`（与 `asOf` 组合）看两时刻之间记忆库发生了什么；**1.5.0**：`graphDiff`（diff 附实体/关系级图边对账）、`timeline`（按天分桶的记忆事件流与总量走势柱状图）；**1.5.1**：`exportHtml`（导出自包含 HTML 可视化页——时间轴柱状视图 + 浏览器本地即时评分检索页，写入存储目录并返回路径）。
 
 工具输出均为**结构化 JSON + 一段文本渲染**，可直接进入上下文，token 开销受预算控制。
 
@@ -188,6 +195,10 @@ BM25  = Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df +
 - **记忆生命周期与冲突感知（1.0.0 模块 A，市面上没有）**：supersede 取代协议（语义单一事实源词表，`auto` 模式识别"改用/升级到"对立信号 → 新记忆打 `supersede:`、旧记忆打 `superseded-by:` → 召回时被取代记忆**降权 + 同现去重**，`supersededPenalty` 可调）、主题自动聚类运行时视图（仅 `themes` 开启时在 `status` 计算，不持久化）、价值感知自动淘汰（`maxEntries` + `autoEvict`，按冷热 + 显著性淘汰，instruction 永不淘汰），方案全文见 [`docs/DESIGN-1.0.md`](docs/DESIGN-1.0.md)；
 - **双引擎混合检索（1.0.0 模块 B，RRF 融合）**：词面线（BM25）/ 容错线（编辑距离 ≤1）/ 语义线（MinHash 覆盖率两级守卫）三线评分，`semanticBoost` 开启时可叠加或按 `rrf`（k=60）融合，真实问句召回率进一步提升（G6 49 问句门限全绿）；
 - **记忆认知层（1.1.0 模块 A-D，市面上没有的「记忆认知」）**：把记忆从平面仓库升维为认知记忆系统——**层次蒸馏**（模块 A：重复行为/偏好簇归纳为抽象原则、指令簇蒸馏为规则约束，`distilled-from` 证据链 + recall expand 向下展开；冲突簇守卫 0 蒸馏防伪原则）、**认知巩固与遗忘曲线**（模块 B：Ebbinghaus 间隔重复强度模型 `R(t)=strength·e^(−Δt/τ)`，空闲批处理对到期高价值记忆巩固复习，协议内更新访问历史、零新字段）、**时序知识图谱**（模块 C：零依赖规则引擎抽取中英主观三元组，`TemporalGraph` 增量维护 + supersede 时间线失效边，成为与词面/容错/语义并列的**第四召回线**——词面全零但图可达条目可补录）、**信念修正与矛盾共存**（模块 D：疑似反转事实并存双向标注、召回双方都保留且新者优先显式输出 `conflicts`，与 supersede 强对立词表互斥，修正时间线随时间戳回放）；对标 MemGPT / GraphRAG / HippoRAG / Zep Graphiti / Generative Agents，全部**纯函数 + 零新增运行时依赖**落地，方案全文见 [`docs/DESIGN-1.1.md`](docs/DESIGN-1.1.md)；
+- **推理升维（1.2.0 模块 E/F，「检索」→「推理」）**：把召回从「哪些记忆与查询相似」升维到「能从记忆推出什么」——**激活扩散推理线**（模块 E：查询实体沿图谱活跃出边多跳扩散，逐跳衰减 × 关系置信度 × 最旧边保守时效，每个终结实体保留可回放的最优路径链；asOf 时间线正确——推理不穿越被取代/失效的关系；波束 + 链数双护栏，hub 扇出有界；interpolate 线性叠加 / RRF 第五条秩融合）与**召回溯源**（模块 F：`explain=true` 时每条命中附带 why——参与融合的召回线/各线贡献/公共权重因子，rrf 模式下贡献与最终分逐位精确相等；纯读侧注记，评分算术路径一字节未动）；方案全文见 [`docs/DESIGN-1.2.md`](docs/DESIGN-1.2.md)；
+- **时空完备（1.3.0 模块 G/H，「当前」→「任意时刻」）**：把召回的时间维度补全——**情景回放**（模块 G：append-only JSONL 日志按文件序纯函数回放 `replayAsOf`，写入时刻由写入协议锚定 `max(updatedAt, lastAccessAt)`，得到任意过去时刻的精确知识状态：存在性/内容版本/取代与矛盾标注/访问热度；图谱按回放语料重建 T 时刻图视图；只读不写热度、不污染索引缓存）与**推理证据链**（模块 H：`why.chains` 把 1.2.0 藏在引擎内部的推理链暴露到工具面——infer 线参与的命中附带至多 3 条逐边可回放的路径链）；方案全文见 [`docs/DESIGN-1.3.md`](docs/DESIGN-1.3.md)；
+- **纵深防御与时间分析（1.4.0 模块 I/J，「明文」→「密文」、「快照」→「变更审计」）**：**会话级加密存储**（模块 I：逐行 AES-256-GCM 认证加密 + scrypt 派生密钥 + 原位迁移保深回放历史——roadmap 收官）与**时间分析**（模块 J：status asOf 历史快照 + T1↔T2 diff 视图六类归因）；方案全文见 [`docs/DESIGN-1.4.md`](docs/DESIGN-1.4.md)；
+- **边界突破（1.5.0 模块 K/L/M/N/O，把设计文档划出的全部剩余边界收敛）**：**口令轮换**（模块 K：加密→新口令/空口令解密回退/明文→加密四态，逐行原序重写保深回放，失败文件保持原状且写链不毒化）、**图维 diff**（模块 L：diffGraphs 双侧重建图视图的活跃边差集，与条目维 diffReplay 互补）、**本地 HNSW 向量第六线**（模块 M：确定性层指派 + 论文 Algorithm 4 多样性近邻选择——单纯最近 M 裁剪在簇状语料上图坍缩为不可达子网，此为实现关键发现；真实规模校准 3333 文档 HNSW vs 暴力全量 top-10 全一致）、**双语抽取**（模块 N：returns/throws/emits/基于/支持… 双语关系面 + 连词拆分 + 标识符点保形）、**记忆时间轴**（模块 O：按天分桶事件流 + 总量走势柱状渲染）、**可视化检索页**（模块 P（1.5.1）：`exportHtml` 导出自包含 HTML——时间轴柱状视图 + 浏览器本地评分检索页，确定性渲染 + 注入安全 + 零外链）；方案全文见 [`docs/DESIGN-1.5.md`](docs/DESIGN-1.5.md)；
 - **事件溯源（Event Sourcing）**：不轮询、不侵入 Agent Loop，订阅 `session/event` 火线获取用户消息，订阅 `tools/result` 获取工具执行结果，纯增量学习；
 - **有界背压捕获队列**：串行 FIFO promise 链 + 上限 256，事件洪水丢弃最早期任务并计数（`dropped`），进程内存永远有界，单条失败不阻断后续；
 - **读一致性（先落盘后入内存）**：所有写路径先 `appendFile` 成功再变更内存 Map，并发读者永远只看到已确认落盘的状态，写失败天然零残留；
@@ -236,6 +247,26 @@ BM25  = Σ tf·(k1+1)/(tf + k1·(1 − b + b·len/avgdl)) × log(1 + (N − df +
 - **信念修正与矛盾共存（模块 D）**：疑似反转事实并存双向标注、召回双方保留且新者优先显式输出 `conflicts`，与 supersede 强对立词表互斥，修正时间线可随时间戳回放；
 - **零行为变化保证**：四个模块默认全部关闭（`distillMode`/`consolidationMode`/`graphEnabled`/`conflictMode`），`memory_status` 扩展输出 `distilled` / `dueCount` / `graph stats` / `conflictPairs` 可观测指标。
 
+### 推理升维（1.2.0，模块 E/F）
+
+- **激活扩散推理线（模块 E，`inferEnabled` + `inferMaxHops`，默认关闭）**：认知科学 spreading activation 的工程化——查询实体沿时序图谱**活跃**出边多跳扩散（每跳 ×0.5 衰减 × 关系置信度 × 最旧边保守时效），每个终结实体保留最优路径链（`A—使用→B—依赖→C` 可回放）；asOf 时间线硬约束（推理不穿越失效关系，含复活语义）；波束 16 + 链数 16 双护栏，hub 扇出有界；interpolate 线性叠加 / RRF 第五条秩融合；
+- **召回溯源（模块 F，`memory_recall explain` 参数）**：每条命中附带 `why`——参与融合的召回线（bm25/fuzzy/semantic/graph/infer）、各线贡献与公共权重因子；rrf 模式下 `Σ贡献 × lineBase` 与最终分**逐位精确相等**；渲染追加 `（溯源: rrf ← bm25=0.0161 + infer=0.0164）`；
+- 设计全文见 [`docs/DESIGN-1.2.md`](docs/DESIGN-1.2.md)，真实规模门禁 G17-G18 锁定。
+
+### 时空完备（1.3.0，模块 G/H）
+
+- **情景回放（模块 G，`memory_recall asOf` 参数）**：回到任意过去时刻召回——`replayAsOf` 纯函数按文件序回放 append-only JSONL 日志，行写入时刻由既有写入协议锚定（内容/标注写入 `updatedAt`、热度回写 `lastAccessAt`），得到该时刻的**精确知识状态**（存在性 / 内容版本 / 取代与矛盾标注 / 访问热度全维度）；tombstone 行携带删除时刻（旧格式保守视为已删除）；图谱按回放语料重建 T 时刻图视图（未来条目的边不存在、取代状态即当时快照）；只读回放不写热度、绕过索引缓存；无 `listAsOf` 实现的存储降级为 `createdAt` 过滤；
+- **推理证据链（模块 H，`explain` 输出 `why.chains`）**：溯源从「infer 线贡献了分」升维到「凭什么推理」——infer 线参与融合的命中附带至多 3 条推理链（路径逐边 `from/relation/to/confidence/occurredAt`，直接回放 `A—使用→B—依赖→C`）；收集机制为纯出参（`chainsOut`），评分路径零改动；
+- 渲染示例：`[memory recall @2026-10-20T00:00:00.000Z] 3 hit(s) … - (fact) …（溯源: interpolate ← infer=0.0164）（推理: 事务机制 —~属于→ mvcc —~依赖→ postgresql (0.42)）`；
+- 设计全文见 [`docs/DESIGN-1.3.md`](docs/DESIGN-1.3.md)，真实规模门禁 G19-G20 锁定（3333 条真实文档语料分阶段写入门禁：分时刻快照手算一致 + 未来条目词面/图边不穿越）。
+
+### 纵深防御与时间分析（1.4.0，模块 I/J）
+
+- **会话级加密存储（模块 I，配置 `passphrase` 或环境变量 `DSH_MEMORY_PASSPHRASE`）**：开启后记忆文件逐行 AES-256-GCM 认证加密（scrypt N=16384 派生密钥；首行密钥记录头存盐与 KDF 参数；AAD 绑定格式版本）——**静态保密**（除头外零明文，备份/镜像/误提交不再泄漏正文）+ **逐行防篡改**（认证失败走既有损坏行隔离留证通道）；错口令与漏口令在加载期显式失败（绝不表现为空库）；**明文库原位加密迁移**逐行原序重写（append-only 深回放历史——旧内容版本与删除时刻——完整保留，仅换密文外衣）；compact 与加密共存；混合文件容忍（迁移中间态可读写）；口令丢失 = 数据不可恢复（无后门）；进程内仍为明文（运行时必需，承诺的是静态保密）；**口令轮换与解密回退（1.5.0 模块 K）**：设 `DSH_MEMORY_NEW_PASSPHRASE` 启动一次即轮换（非空 = 换口令/启用加密，空串 = 解密回退明文），逐行原序重写保深回放历史、失败文件保持原状、多进程写锁护栏，改完移除变量；
+- **时间分析（模块 J，`memory_status` 新参数）**：`asOf` 历史快照视图——该时刻的记忆库统计（只含当时存在的记忆/当时内容版本与取代矛盾状态，语料层字段封闭不掺运行时观测，冷热分层以 asOf 为现在）；`diffSince`（与 `asOf` 组成 T1↔T2 diff 视图）——期间记忆库发生了什么：新增/消失/内容变更/取代矛盾/纯热度六类归因（`diffReplay` 纯函数确定性），明细 ≤20 样本、计数完整；降级存储按 createdAt 近似（removed 恒空，口径已声明）；
+- 渲染示例：`[memory status diff 2026-10-24T… → 2026-10-29T…] +2 -1 ~0 (heat 1)`；`[memory status @2026-10-24T…] 401 entries`；
+- 设计全文见 [`docs/DESIGN-1.4.md`](docs/DESIGN-1.4.md)，真实规模门禁 G21-G22 锁定（400 条真实语料落盘零明文多锚点抽验 + 迁移保深回放；G19 同构分阶段时间线三分区 diff 与手算一致）。
+
 ## 开发
 
 ```bash
@@ -243,13 +274,13 @@ npm install          # 安装依赖
 npm run typecheck    # tsc --noEmit 类型检查
 npm run lint         # eslint 静态检查
 npm run format:check # prettier 格式检查
-npm test             # vitest run（439 个单测/集成/加载冒烟测试 + tools-1.1 断言）
-npm run eval         # A5 离线质量评估（黄金语料 + 参数网格 + G1-G12 门禁，一键可复算）
-npm run test:coverage # vitest 覆盖率（含阈值守护：lines ≥96.5 / branches ≥95 / functions ≥97）
+npm test             # vitest run（612 个单测/集成/加载冒烟测试 + 70 项 eval 评估门禁，合计 682）
+npm run eval         # A5 离线质量评估（黄金语料 + 参数网格 + G1-G20 门禁，一键可复算）
+npm run test:coverage # vitest 覆盖率（含阈值守护：lines/statements ≥98 / functions ≥98 / branches ≥93，1.3.0 按实测再冻结（1.4.0 新源文件维持））
 npm run check        # 一键全检：verify:realdata + typecheck + lint + format + test
 npm run build        # tsup 产出 ESM + d.ts 到 lib/
 npm run bench        # vitest bench 性能基准（recall 召回/索引 0.4.0、知识图谱 10K 构建/P95、蒸馏批处理）
-npm pack             # 产出 dsh-memory-hub-1.1.0.tgz
+npm pack             # 产出 dsh-memory-hub-1.4.0.tgz
 ```
 
 ## 目录结构
@@ -263,7 +294,7 @@ dsh-memory-hub/
 │   ├── memory/
 │   │   ├── types.ts          # MemoryEntry 契约 + 运行时守卫（isMemoryEntry/parse/to）+ RecallOptions
 │   │   ├── entry-factory.ts  # 1.0.0 统一记忆条目工厂（id 组装/tags 清洗/截断/workspace 注入/时间戳单一语义，三写入路径共用）
-│   │   ├── store.ts          # append-only JSONL + tombstone + removeMany + compact 自检 + exportAll + 损坏行隔离留证
+│   │   ├── store.ts          # append-only JSONL + tombstone（1.3.0 起带删除时刻）+ replayAsOf 情景回放 + removeMany + compact 自检 + exportAll + 损坏行隔离留证
 │   │   ├── engine.ts         # 倒排索引 + BM25 + A1 容错变体 + A2 语义特征/MinHash + A3 价值加权 + A4 热度生命周期 + IndexCache（纯函数）
 │   │   ├── importer.ts       # 0.6.0 真实数据接入（Markdown 切块 / 会话 JSONL 提取 / kind 推断 / 幂等规划，纯函数）
 │   │   ├── text.ts           # 0.7.0 内容块文本提取唯一实现（index/importer 共享，消除重复实现）
@@ -272,41 +303,37 @@ dsh-memory-hub/
 │   │   ├── capture.ts        # 事件捕获启发式 + NFKC 归一化敏感过滤
 │   │   ├── distill.ts        # 1.1.0 记忆层次蒸馏（聚类/归纳/分层/证据链引用，纯函数）
 │   │   ├── consolidation.ts  # 1.1.0 认知巩固与遗忘曲线（强度模型/到期判定，纯函数）
-│   │   ├── graph.ts          # 1.1.0 时序知识图谱（三元组抽取/TemporalGraph/第四召回线）
+│   │   ├── graph.ts          # 1.1.0 时序知识图谱（三元组抽取/TemporalGraph/第四召回线 + 1.1.1 实体归一层）
+│   │   ├── infer.ts          # 1.2.0 激活扩散推理线（多跳最优路径链/asOf 时间线/波束有界，第五召回线）
+│   │   ├── crypto.ts         # 1.4.0 逐行 AEAD 编解码器（scrypt KDF + AES-256-GCM 信封 + 密钥记录头）
 │   │   ├── conflict.ts       # 1.1.0 信念修正与矛盾共存（弱对立信号/双向标注）
 │   │   └── cognitive.ts      # 1.1.0 A-D 认知模块入口聚合 + 空闲巩固/蒸馏调度
-│   └── tools/                # memory_store / recall（含 kind 过滤 + 1.1.0 expand/graphEnabled/reinforce/asOf）/ forget / status（+ 1.1.0 distilled/graph/dueCount/conflictPairs 可观测）
-├── eval/                     # A5 离线质量评估套件（corpus 黄金语料 / realdata 真实数据门 G6 / metrics 指标 / G1-G12 门限测试，1.1.0 含 bit-exact 零行为回归）
+│   └── tools/                # memory_store / recall（含 kind 过滤 + 1.1.0 expand/graphEnabled/reinforce + 1.3.0 asOf 情景回放 + 1.2.0 infer/explain 溯源与 why.chains 证据链）/ forget / status（+ 1.1.0 distilled/graph/dueCount/conflictPairs 可观测 + 1.4.0 asOf 历史快照与 diffSince diff 视图）
+├── eval/                     # A5 离线质量评估套件（corpus 黄金语料 / realdata 真实数据门 G6 / metrics 指标 / G1-G26 门限测试，含 bit-exact 零行为回归 + G13-G16 真实规模认知接地 + G17-G18 推理门禁 + G19-G20 时空门禁 + G21-G22 加密与时间分析门禁 + G23-G25 边界突破门禁 + G26 可视化页门禁）
 ├── bench/                    # vitest bench 性能基准（recall 召回/索引 0.4.0、知识图谱 10K 构建/P95、蒸馏 1K/10K 批处理）
-├── test/                     # 439 个单元 + 集成 + 加载冒烟测试（含 0.8.0/0.9.0 升维专场 + 1.1.0 工具新参数断言）
+├── test/                     # 612 个单元 + 集成 + 加载冒烟测试（含 0.8.0/0.9.0 升维专场 + 1.1.0 工具新参数断言 + 1.2.0 推理线/溯源专场 + 1.3.0 情景回放/证据链专场 + 1.4.0 加密/时间视图专场 + 1.5.0 轮换/图维/时间轴/双语/向量专场 + 1.5.1 可视化导出专场 + coverage-1.3 系列覆盖率阈值回归五件套）
 ├── docs/ARCHITECTURE.md      # 架构设计与市场空白论证（含 0.1.0→1.0.0 全版本演进 + 1.0.0 世纪升维）
-├── docs/DESIGN-1.0.md        # 1.0.0 世纪升维设计（模块 A-D：生命周期/混合检索/指纹/可观测性）
 ├── docs/DESIGN-1.1.md        # 1.1.0 认知记忆系统设计（模块 A-D：蒸馏/巩固/时序图谱/矛盾共存 + G9-G12 门限）
-├── docs/GROUND-0.10.md       # 0.9.0 → 0.10.0 真实数据接地（G6 真实数据门）方案与实测对比
-├── docs/LIFT-0.9.md          # 0.8.0 → 0.9.0 全模块薄弱项升维审查与方案
-├── docs/QUALITY-0.9.md       # 0.9.0 质量报告（全链质量门实测）
-├── docs/DESIGN-0.9.md        # 0.9.0 创新升维设计方案（16 项薄弱项闭环）
+├── docs/DESIGN-1.2.md        # 1.2.0 推理升维设计（模块 E/F：激活扩散推理线/召回溯源 + G17-G18 门限）
+├── docs/DESIGN-1.3.md        # 1.3.0 时空完备设计（模块 G/H：情景回放/推理证据链 + G19-G20 门限）
+├── docs/DESIGN-1.4.md        # 1.4.0 纵深防御与时间分析设计（模块 I/J：加密存储/时间分析 + G21-G22 门限）
+├── docs/DESIGN-1.5.md        # 1.5.0/1.5.1 边界突破设计（模块 K/L/M/N/O/P：口令轮换/图维 diff/向量第六线/双语抽取/时间轴/可视化检索页 + G23-G26 门限）
 ├── docs/DEEP-AUDIT.md        # 0.8.0 终态全模块薄弱项七维度深度审计
-├── docs/LIFT-0.8.md          # 0.7.0 → 0.8.0 全模块薄弱项升维审查与方案
-├── docs/QUALITY-0.7.md       # 0.6.0 → 0.7.0 世界级代码质量升级审查与方案
-├── docs/INNOVATION-0.5.md    # 0.4.0 → 0.5.0 深度创新升级方案（A1-A5 设计定稿）
-├── docs/REALDATA-0.6.md      # 0.5.0 → 0.6.0 真实数据接入层设计方案
-├── docs/CENTURY-0.4.md       # 0.3.0 → 0.4.0 世纪升级审查与方案
-├── docs/QUALITY-0.3.md       # 全量代码质量前沿化进化方案
-├── docs/EVOLUTION-0.3.md     # 0.2.0 → 0.3.0 世界级升维审查与方案
-├── docs/EVOLUTION.md         # 0.1.0 → 0.2.0 演进审查方案
+├── docs/history/             # 历史版本设计快照归档（EVOLUTION/CENTURY/QUALITY/LIFT/GROUND/REALDATA/INNOVATION/DESIGN-0.9/DESIGN-1.0 等 13 篇 + 质量报告）
 ├── .github/workflows/ci.yml  # GitHub Actions CI（node 18/20/22 × 全检 + coverage + quality-eval 门限）
 ├── CHANGELOG.md              # Keep a Changelog 版本记录
 ├── eslint.config.js          # eslint 9 flat config（typescript-eslint 严格）
 ├── .prettierrc.json          # prettier 格式约定
-├── vitest.config.ts          # vitest + 覆盖率阈值（lines ≥96.5 / branches ≥95 / functions ≥97 / statements ≥96.5）
+├── vitest.config.ts          # vitest + 覆盖率阈值（lines/statements ≥98 / functions ≥98 / branches ≥93，1.3.0 按实测同步再冻结）
 └── cordis.patch.yml          # 插件 bundle patch 声明
 ```
 
-完整设计推导见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，1.0.0 世纪升维见 [`docs/DESIGN-1.0.md`](docs/DESIGN-1.0.md)，1.1.0 认知记忆系统见 [`docs/DESIGN-1.1.md`](docs/DESIGN-1.1.md)，0.5.0 创新方案见 [`docs/INNOVATION-0.5.md`](docs/INNOVATION-0.5.md)，0.6.0 真实数据接入见 [`docs/REALDATA-0.6.md`](docs/REALDATA-0.6.md)，0.10.0 真实数据接地见 [`docs/GROUND-0.10.md`](docs/GROUND-0.10.md)，0.7.0 质量升级见 [`docs/QUALITY-0.7.md`](docs/QUALITY-0.7.md)，0.9.0 薄弱项深度闭环见 [`docs/LIFT-0.9.md`](docs/LIFT-0.9.md) 与 [`docs/QUALITY-0.9.md`](docs/QUALITY-0.9.md)，0.8.0 全模块薄弱项升维见 [`docs/LIFT-0.8.md`](docs/LIFT-0.8.md)。
+完整设计推导见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，1.1.0 认知记忆系统见 [`docs/DESIGN-1.1.md`](docs/DESIGN-1.1.md)，1.2.0 推理升维见 [`docs/DESIGN-1.2.md`](docs/DESIGN-1.2.md)，1.3.0 时空完备见 [`docs/DESIGN-1.3.md`](docs/DESIGN-1.3.md)，1.4.0 纵深防御与时间分析见 [`docs/DESIGN-1.4.md`](docs/DESIGN-1.4.md)，1.5.0 边界突破见 [`docs/DESIGN-1.5.md`](docs/DESIGN-1.5.md)；0.1.0→1.1.1 各历史版本设计快照（EVOLUTION/CENTURY/QUALITY/LIFT/GROUND/REALDATA/INNOVATION/DESIGN 系列）已归档 [`docs/history/`](docs/history/)。
 
 ## 隐私与安全
 
+- **1.4.0 可选加密**：配置 `passphrase`（或环境变量 `DSH_MEMORY_PASSPHRASE`）后记忆文件逐行 AES-256-GCM 加密落盘，静态零明文、逐行防篡改、错口令加载期显式失败；明文库开启口令即自动原位迁移（历史完整保留）；口令丢失不可恢复；
+- **1.5.0 边界突破**：口令轮换/解密回退（`DSH_MEMORY_NEW_PASSPHRASE` 启动期一次）；`memory_status graphDiff` 图维对账与 `timeline` 时间轴；`vectorEnabled`/`memory_recall vector` 本地 HNSW 向量第六召回线（3333 真实文档对拍暴力全量 top-10 全一致）；双语实体抽取（英文技术关系面 + 连词拆分）；`memory_status exportHtml` 自包含 HTML 可视化页（时间轴 + 本地检索，明文观看工件、0600 落存储目录）；
 - 记忆文件默认位于 `~/.dsh/memory-hub/memories.jsonl`，明文 JSONL：文件权限始终 0600（首写即生效），目录对本插件新建路径收紧为 0700、既有共享目录不被动，仅本机可读；
 - 采集层内置敏感模式拦截（OpenAI key / sha1 token / JWT / 密码键值 / 私钥 / MongoDB 连接串 / `user:pass@host` / AWS `AKIA` / GitHub `ghp_` / Slack `xox` / GCP `AIza`），匹配前经 **NFKC 归一化**，全角/异体字符无法绕过；
 - 显式记忆（`memory_store`）同样拒绝敏感明文入库，命中即抛 `SENSITIVE_CONTENT` 错误码；
@@ -328,9 +355,13 @@ dsh-memory-hub/
 - [x] 真实数据接地：真实官方文档语料经生产同路径入库，G6 真实数据门（recall@1≥0.75 / @3≥0.85 / @5≥0.95）入 CI（0.10.0）
 - [x] 世纪升维 1.0.0：记忆生命周期与冲突感知（supersede 取代协议 / 主题聚类视图 / 价值感知淘汰）+ 双引擎混合检索（三线评分 + interpolate/RRF 融合）+ UF-1.0 统一指纹去重 + 可观测性升维；评估门禁扩至 G1-G8（4 维 81 组网格 / 49 真实问句 / 五类鲁棒扰动 / 生命周期聚类）
 - [x] 认知记忆系统 1.1.0：记忆层次蒸馏 + 认知巩固与遗忘曲线 + 时序知识图谱第四召回线 + 信念修正与矛盾共存；评估门禁扩至 G1-G12（含零行为逐字节回归断言）与 bench 性能基准
-- [ ] 会话级加密存储（可选 passphrase）
-- [ ] 记忆时间轴 / 可视化检索页
-- [ ] 向量召回后端（本地 HNSW）作为第五线接入 RRF（MinHash 签名/特征集缓存已就绪，未来 LSH 剪枝直接复用）
+- [x] 全量审计加固 1.1.1：2×P0/12×P1 修复（黄金语料入库/图谱播种/多进程 compact 安全/热度评分冻结/近重复落穿）+ engine 模块化 + 中文分词根治 + 图谱实体归一层；评估门禁扩至 G1-G16（真实规模认知接地）
+- [x] 推理升维 1.2.0：激活扩散推理第五召回线（最优路径链可回放/asOf 时间线不可穿越失效关系/波束链数双护栏有界）+ 召回溯源 why（全命中可解释，rrf 贡献与最终分逐位精确相等）；评估门禁扩至 G1-G18
+- [x] 时空完备 1.3.0：情景回放（replayAsOf 日志级纯函数回放——任意时刻的存在性/内容版本/取代矛盾/热度全维度状态 + T 时刻图视图重建 + 只读不写热度）+ 推理证据链 why.chains（凭什么推理——逐边可回放路径链）；评估门禁扩至 G1-G20
+- [x] 纵深防御与时间分析 1.4.0：会话级加密存储（可选 passphrase——逐行 AES-256-GCM + scrypt 派生 + 原位迁移保深回放历史）+ status asOf 历史快照与 T1↔T2 diff 视图；评估门禁扩至 G1-G22
+- [x] 边界突破 1.5.0：口令轮换与解密回退 + 图维 diff 对账 + 本地 HNSW 向量第六召回线（roadmap 项：确定性 HNSW 接入 RRF）+ 双语实体抽取 + 记忆时间轴（roadmap 项）；评估门禁扩至 G1-G25
+- [x] 可视化检索页 1.5.1（roadmap 项）：`memory_status exportHtml` 自包含 HTML 导出——时间轴柱状视图 + 浏览器本地即时评分检索页（零依赖/零外链/确定性/注入安全，G26 真实规模门禁）；评估门禁扩至 G1-G26
+- [ ] 跨平台 GUI 记忆管理（桌面级应用：编辑/导入导出 UI/多库管理——**不属于当前边界目标范围（已确认，另案推进）**；可视化检索半项已由 1.5.1 关闭，存储迁移闭环 + 加密/轮换管线已就绪）
 - [ ] 跨平台 GUI 记忆管理（存储层迁移闭环已就绪）
 
 ## License

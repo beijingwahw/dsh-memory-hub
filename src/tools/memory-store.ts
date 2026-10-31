@@ -15,13 +15,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ErrorCodes, MemoryHubError } from '../errors'
 import { containsSensitive } from '../memory/capture'
 import { detectContradiction, CONFLICTS_WITH_TAG_PREFIX, CONFLICT_OF_TAG_PREFIX } from '../memory/conflict'
-import { detectDuplicate } from '../memory/engine'
-import {
-  makeEntry,
-  SUPERSEDE_TAG_PREFIX,
-  SUPERSEDED_BY_TAG_PREFIX,
-  supersededByTargetId,
-} from '../memory/entry-factory'
+import { findDuplicate } from '../memory/engine'
+import { makeEntry, SUPERSEDE_TAG_PREFIX, SUPERSEDED_BY_TAG_PREFIX } from '../memory/entry-factory'
 import { findSupersedeTarget } from '../memory/ingest'
 import type { HubMetrics } from '../memory/metrics'
 import type { GraphWriteSink, MemoryStore } from '../memory/types'
@@ -53,6 +48,8 @@ export function createMemoryStoreTool(
     conflictMode?: 'off' | 'auto'
     conflictSimilarity?: number
     conflictSameKind?: boolean
+    /** 1.1.1：矛盾检测独立窗口（默认 30 天，与去重窗口解耦） */
+    conflictWindowMs?: number
     // 1.1.0（DESIGN-1.1 模块 C）：图谱写入钩子（入口注入 TemporalGraph；增量建边）
     graph?: GraphWriteSink
   },
@@ -86,17 +83,19 @@ export function createMemoryStoreTool(
       }
       const existing = await store.list()
       const dedupWindowMs = opts?.dedupWindowMs ?? 0
-      // 1.0.0 UF-1.0：库内内容级去重（跨 id 前缀互认；命中返回已存在条目，幂等不重复写入）
-      if (dedupWindowMs > 0 && detectDuplicate(existing, args.content.trim(), dedupWindowMs)) {
-        for (const e of existing) {
-          if (e.content === args.content.trim()) {
-            if (metrics) {
-              metrics.rejectedDuplicate++
-              metrics.rejectedDuplicateCrossPath = (metrics.rejectedDuplicateCrossPath ?? 0) + 1
-            }
-            logger?.(`[dsh-memory-hub] duplicate explicit store skipped: ${e.id}`)
-            return { id: e.id, content: e.content, kind: e.kind }
+      // 1.0.0 UF-1.0 + 1.1.1 修复：库内内容级去重（跨 id 前缀互认），命中（精确指纹或
+      // >0.92 近重复）一律幂等返回已存在条目。原实现内层只找精确内容匹配，近重复命中后
+      // 落穿继续写入——与 ingest 捕获路径的拒绝语义相悖，头注释承诺的「幂等不重复写入」
+      // 至此真正成立。
+      if (dedupWindowMs > 0) {
+        const dup = findDuplicate(existing, args.content.trim(), dedupWindowMs)
+        if (dup !== undefined) {
+          if (metrics) {
+            metrics.rejectedDuplicate++
+            metrics.rejectedDuplicateCrossPath = (metrics.rejectedDuplicateCrossPath ?? 0) + 1
           }
+          logger?.(`[dsh-memory-hub] duplicate explicit store skipped: ${dup.id}`)
+          return { id: dup.id, content: dup.content, kind: dup.kind }
         }
       }
 
@@ -125,6 +124,8 @@ export function createMemoryStoreTool(
           existing,
           { content: args.content, kind },
           {
+            // 1.1.1：矛盾检测独立窗口（默认 30 天；此前复用去重窗口使跨周信念反转不可检测）
+            conflictWindowMs: opts.conflictWindowMs ?? 30 * 24 * 60 * 60 * 1000,
             dedupWindowMs: Math.max(dedupWindowMs, 24 * 60 * 60 * 1000),
             ...(opts.conflictSimilarity !== undefined ? { conflictSimilarity: opts.conflictSimilarity } : {}),
             ...(opts.conflictSameKind !== undefined ? { conflictSameKind: opts.conflictSameKind } : {}),
@@ -145,25 +146,33 @@ export function createMemoryStoreTool(
       await store.upsert(entry)
       // 1.1.0（模块 C）：图谱写入钩子（明确写入路径与自动捕获一致）
       if (opts?.graph) opts.graph.add(entry)
-      if (target !== undefined && !supersededByTargetId(target)) {
-        const updated = {
-          ...target,
-          tags: [...target.tags, `${SUPERSEDED_BY_TAG_PREFIX}${entry.id}`],
-          updatedAt: now,
+      if (target !== undefined) {
+        // 1.1.1：守卫从「已有任一 superseded-by 就跳过」改为「仅当已被本条目标记时跳过」，
+        // 同一旧条目可被多个新条目先后取代，各自的回指标记都保留
+        const marker = `${SUPERSEDED_BY_TAG_PREFIX}${entry.id}`
+        if (!target.tags.includes(marker)) {
+          const updated = {
+            ...target,
+            tags: [...target.tags, marker],
+            updatedAt: now,
+          }
+          await store.upsert(updated)
+          if (opts?.graph) opts.graph.add(updated)
+          if (metrics) metrics.superseded = (metrics.superseded ?? 0) + 1
         }
-        await store.upsert(updated)
-        if (opts?.graph) opts.graph.add(updated)
-        if (metrics) metrics.superseded = (metrics.superseded ?? 0) + 1
       }
-      if (conflictTarget !== undefined && !supersededByTargetId(conflictTarget)) {
-        const updated = {
-          ...conflictTarget,
-          tags: [...conflictTarget.tags, `${CONFLICT_OF_TAG_PREFIX}${entry.id}`],
-          updatedAt: now,
+      if (conflictTarget !== undefined) {
+        const marker = `${CONFLICT_OF_TAG_PREFIX}${entry.id}`
+        if (!conflictTarget.tags.includes(marker)) {
+          const updated = {
+            ...conflictTarget,
+            tags: [...conflictTarget.tags, marker],
+            updatedAt: now,
+          }
+          await store.upsert(updated)
+          if (opts?.graph) opts.graph.add(updated)
+          if (metrics) metrics.conflictPairs = (metrics.conflictPairs ?? 0) + 1
         }
-        await store.upsert(updated)
-        if (opts?.graph) opts.graph.add(updated)
-        if (metrics) metrics.conflictPairs = (metrics.conflictPairs ?? 0) + 1
       }
       if (metrics) metrics.explicitStored++
       logger?.(`[dsh-memory-hub] stored ${kind}: ${entry.content.slice(0, 60)}`)

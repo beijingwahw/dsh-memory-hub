@@ -54,6 +54,17 @@ export interface HubMetricsSnapshot {
   graphEdges?: number
   /** 1.1.0（模块 C，可选）：图谱线召回命中条目数（graphEnabled=true 时图线贡献计数） */
   graphHits?: number
+  /** 1.2.0（DESIGN-1.2 模块 E，可选）：推理线召回命中条目数（inferEnabled=true 时计数） */
+  inferHits?: number
+  /** 1.3.0（DESIGN-1.3 模块 G，可选）：情景回放（asOf 时序召回）调用计数 */
+  asOfRecalls?: number
+  /** 1.4.0（DESIGN-1.4 模块 J，可选）：memory_status 时间视图（asOf 快照 / diff）调用计数 */
+  statusAsOf?: number
+  /** 1.5.0（DESIGN-1.5 模块 M/O，可选）：向量第六线召回命中计数 / 时间轴视图调用计数 */
+  vectorHits?: number
+  statusTimeline?: number
+  /** 1.5.1（DESIGN-1.5 模块 P，可选）：可视化 HTML 页导出计数 */
+  htmlExports?: number
   /** 1.1.0（模块 D，可选）：矛盾共存对计数（双向标注完备的唯一对） */
   conflictPairs?: number
 }
@@ -91,6 +102,12 @@ export function formatMetrics(m: HubMetrics): string {
   if (m.consolidationDue !== undefined) extras.push(`consolidationDue=${m.consolidationDue}`)
   if (m.graphEdges !== undefined) extras.push(`graphEdges=${m.graphEdges}`)
   if (m.graphHits !== undefined) extras.push(`graphHits=${m.graphHits}`)
+  if (m.inferHits !== undefined) extras.push(`inferHits=${m.inferHits}`)
+  if (m.asOfRecalls !== undefined) extras.push(`asOfRecalls=${m.asOfRecalls}`)
+  if (m.statusAsOf !== undefined) extras.push(`statusAsOf=${m.statusAsOf}`)
+  if (m.vectorHits !== undefined) extras.push(`vectorHits=${m.vectorHits}`)
+  if (m.statusTimeline !== undefined) extras.push(`statusTimeline=${m.statusTimeline}`)
+  if (m.htmlExports !== undefined) extras.push(`htmlExports=${m.htmlExports}`)
   if (m.conflictPairs !== undefined) extras.push(`conflictPairs=${m.conflictPairs}`)
   const tail = extras.length > 0 ? ', ' + extras.join(', ') : ''
   return (

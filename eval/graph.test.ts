@@ -61,7 +61,8 @@ describe('G10 抽取有效性：中英混合主观三元组召回 ≥ 80%', () =
     const cases: Array<[string, string, string]> = [
       ['Postgres uses MVCC', 'postgres', 'uses'],
       ['the app uses caching', 'the app', 'uses'],
-      ['the app is built with Rust', 'the app is', 'built with'],
+      // 1.5.0（模块 N）：主语尾部系动词剥除——'the app is built with Rust' 的主语是 'the app'
+      ['the app is built with Rust', 'the app', 'built with'],
     ]
     let hit = 0
     for (const [sentence, subj, rel] of cases) {

@@ -22,16 +22,27 @@
  * - 并存语义：冲突对双方在召回中同时出现（不剔除），新者序先；
  * - 零行为回归：conflictMode 缺省 off 时行为与 1.0.0 逐字节一致。
  */
-import { normalizeForMatch } from './capture'
+import { hasOpposingSignal, normalizeForMatch } from './capture'
 import { isSuperseded, supersedeTargetId } from './entry-factory'
 import { similarity } from './engine'
 import type { MemoryEntry, MemoryHit } from './types'
 
 /** 矛盾并存相似度门槛（默认；低于 supersede 0.85 强门槛——相近但非重复） */
 export const CONFLICT_SIMILARITY_THRESHOLD = 0.55
+/**
+ * 矛盾检测独立窗口（默认 30 天；1.1.1 与 dedupWindowMs 解耦）。
+ * 信念反转的典型时距是数天到数周——此前复用 24h 去重窗口使「上个月说用 MySQL，
+ * 今天说不再用」类跨周信念修正**永远检测不到**（旧条目已在窗口外）。
+ */
+export const DEFAULT_CONFLICT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 /** 强指令排除门槛：kind=instruction 且含下词 → 不判矛盾（止损指令非信念反转） */
 const STRONG_INSTRUCTION_HINTS = new RegExp(/(?:必须|务必|一定要|始终|always|must|required)/i)
-/** 弱化对立词表（单一事实源；反转倾向，与 supersede 强表互斥语义） */
+/**
+ * 弱化对立词表（单一事实源；反转倾向，与 supersede 强表**词面互斥**）。
+ * 1.1.1：移除 '不再是'（与 OPPOSING_SIGNAL_TERMS 重复，属明确替换语义应走 supersede）；
+ * 含强对立信号（改用/换成/升级到/不再用……）的候选在 detectContradiction 入口被整体
+ * 排除，'不再' 与 '不再用' 的前缀子串重叠不再产生双路触发。
+ */
 export const CONFLICT_SIGNAL_TERMS: readonly string[] = [
   '不再',
   '不要',
@@ -40,7 +51,6 @@ export const CONFLICT_SIGNAL_TERMS: readonly string[] = [
   '放弃',
   '反转',
   '相反',
-  '不再是',
   'no longer',
   'opposite',
   'revert',
@@ -98,11 +108,15 @@ export function isConflicted(entry: MemoryEntry): boolean {
 /**
  * D1 矛盾对检测（纯函数，可复算）。
  * 条件（全部满足才命中）：
- * - 候选含弱化对立信号（hasConflictSignal）；
+ * - 候选含弱化对立信号（hasConflictSignal）且**不含**强对立信号（词表互斥：
+ *   「改用/换成/升级到/不再用……」类明确替换只走 supersede 协议——此前这类候选在
+ *   supersede 找不到 0.85 相似目标时会退而给 0.6 相似条目打矛盾标，正是设计文档
+ *   声称要避免的误标路径）；
  * - 与窗口内既有条目 similarity > 阈值（默认 0.55，可注入）；可选同 kind；
+ *   窗口默认 30 天（conflictWindowMs，与 dedupWindowMs 解耦——信念反转常跨周）；
  * - 排除已处于 supersede 协议的条目：既有条目带 superseded-by / supersede tag → 跳过
  *   （取代对走 1.0.0 协议，不打矛盾标）；
- * - 排除强指令：候选 kind=instruction 且含 必须/务必/always/must… → 止损指令非信念反转。
+ * - 排除强指令：候选 kind=instruction 且含 必须/务必/always/must… → 止损/纪律指令非信念反转。
  * 命中返回窗口内相似度最高的旧条目；否则 undefined。
  */
 export function detectContradiction(
@@ -110,19 +124,24 @@ export function detectContradiction(
   cand: Pick<MemoryEntry, 'content' | 'kind'>,
   opts: {
     dedupWindowMs: number
+    /** 1.1.1：矛盾检测独立窗口（默认 30 天；缺省回落 dedupWindowMs 保持调用方兼容） */
+    conflictWindowMs?: number
     conflictSimilarity?: number
     conflictSameKind?: boolean
   },
   now = Date.now(),
 ): MemoryEntry | undefined {
   if (!hasConflictSignal(cand.content)) return undefined
+  // 1.1.1 词表互斥强化：强对立信号（明确替换语义）的候选整体排除，交由 supersede 协议处理
+  if (hasOpposingSignal(cand.content)) return undefined
   const threshold = opts.conflictSimilarity ?? CONFLICT_SIMILARITY_THRESHOLD
+  const windowMs = opts.conflictWindowMs ?? opts.dedupWindowMs
   // 强指令排除：kind=instruction 且含务必类词 → 止损/纪律指令不判为信念反转
   if (cand.kind === 'instruction' && STRONG_INSTRUCTION_HINTS.test(cand.content)) return undefined
   let best: MemoryEntry | undefined
   let bestSim = threshold
   for (const e of existing) {
-    if (now - e.createdAt > opts.dedupWindowMs) continue
+    if (now - e.createdAt > windowMs) continue
     if (opts.conflictSameKind !== false && e.kind !== cand.kind) continue
     // 互斥：已走 supersede 协议的条目不参与矛盾共存（取代对内部不再打矛盾标）
     if (isSuperseded(e) || supersedeTargetId(e) !== undefined) continue

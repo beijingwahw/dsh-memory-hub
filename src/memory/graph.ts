@@ -24,7 +24,22 @@
  */
 import { normalizeForMatch } from './capture'
 import { isSuperseded } from './entry-factory'
+import { tokenize } from './tokenize'
 import type { GraphRecallSource, MemoryEntry } from './types'
+
+/**
+ * 1.1.1 实体归一化（图内规范键）：NFKC 小写 + 空白折叠 + 首尾连接标点剥离。
+ * 动机：此前图内以**原始字符串**为键做精确匹配——「MySQL。」「mysql」「Mysql」是三个
+ * 互不相通的实体；查询侧与记忆侧任何措辞/大小写/尾标点差异都直接 miss。
+ * 全部内部 Map（outgoing/incident/lastSeen/tokenIndex）与查询入口统一走此规范形。
+ */
+export function normalizeEntityKey(s: string): string {
+  return normalizeForMatch(s)
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s，、:：,;；.。!！?？]+/, '')
+    .replace(/[\s，、:：,;；.。!！?？]+$/, '')
+    .trim()
+}
 
 /** 图谱线权重（interpolate 融合模式，可注入覆盖）；仅 graphEnabled=true 时生效 */
 export const GRAPH_LINE_WEIGHT = 0.35
@@ -42,6 +57,10 @@ const CONFIDENCE_FLOOR = 0.8
 /**
  * 关系词表（单一事实源，中文按 indexOf 匹配、英文按词边界正则匹配）。
  * `[关系词, 置信度]`；新词只增不改，行为保持超集兼容。
+ * 1.5.0（DESIGN-1.5 模块 N）双语扩展：补齐英文技术文档高频关系面
+ * （based on / powered by / written in / returns / throws / emits / supports / …）
+ * 与中文对应面（基于/支持/提供/返回/抛出/发出/改为/换成…）——1.2.0/1.3.0 声明的
+ * 「英文语料仅产出片段型实体、词表扩展属后续独立课题」边界自此收敛为双语词表。
  */
 const RELATION_TERMS: ReadonlyArray<readonly [string, number, 'zh' | 'en']> = [
   ['是', 0.9, 'zh'],
@@ -62,6 +81,16 @@ const RELATION_TERMS: ReadonlyArray<readonly [string, number, 'zh' | 'en']> = [
   ['偏好', 0.95, 'zh'],
   ['推荐', 0.85, 'zh'],
   ['禁止', 1.0, 'zh'],
+  ['基于', 0.9, 'zh'],
+  ['支持', 0.9, 'zh'],
+  ['提供', 0.9, 'zh'],
+  ['返回', 0.85, 'zh'],
+  ['抛出', 0.9, 'zh'],
+  ['发出', 0.85, 'zh'],
+  ['继承', 0.9, 'zh'],
+  ['实现', 0.9, 'zh'],
+  ['改为', 1.0, 'zh'],
+  ['换成', 1.0, 'zh'],
   ['uses', 1.0, 'en'],
   ['use', 0.8, 'en'],
   ['built with', 1.0, 'en'],
@@ -73,9 +102,28 @@ const RELATION_TERMS: ReadonlyArray<readonly [string, number, 'zh' | 'en']> = [
   ['recommends', 0.85, 'en'],
   ['requires', 0.95, 'en'],
   ['replaces', 1.0, 'en'],
+  ['based on', 0.9, 'en'],
+  ['powered by', 0.9, 'en'],
+  ['written in', 1.0, 'en'],
+  ['deployed on', 1.0, 'en'],
+  ['migrated to', 1.0, 'en'],
+  ['upgraded to', 1.0, 'en'],
+  ['replaced by', 1.0, 'en'],
+  ['part of', 0.95, 'en'],
+  ['belongs to', 0.95, 'en'],
+  ['supports', 0.9, 'en'],
+  ['provides', 0.9, 'en'],
+  ['returns', 0.85, 'en'],
+  ['accepts', 0.9, 'en'],
+  ['throws', 0.9, 'en'],
+  ['emits', 0.9, 'en'],
+  ['extends', 0.9, 'en'],
+  ['implements', 0.9, 'en'],
 ]
 
-/** 主语侧常见指示词前缀（归一化匹配；命中则剥除——「用户/我们/项目」不作为实体主语） */
+/** 主语侧常见指示词前缀（归一化匹配；命中则剥除——「用户/我们/项目」不作为实体主语）。
+ * 1.1.1 锁定语义：只剥**指示词**前缀（the user/the system…），普通定冠词短语
+ * （'the app'）保留为实体主语——1.5.0 模块 N 维持该锁定，不追加裸 'the '。 */
 const SUBJECT_PREFIXES: readonly string[] = [
   '用户',
   '我',
@@ -98,6 +146,54 @@ const SUBJECT_PREFIXES: readonly string[] = [
 /** 句内分隔符（中文/英文；主语与宾语截断边界） */
 const SENTENCE_SEPS = ['。', '，', '！', '？', '；', '\n', '.', ',', '!', '?', ';']
 
+/** 1.5.0（模块 N）：句点分隔判定——标识符内部的点（node.js / fs.readfile，两侧均为
+ * 字母数字）不是句分隔；真正的句末点号（后随空白/结尾/非字母数字）才是。 */
+function isAlnumChar(ch: string): boolean {
+  return ch !== '' && /[a-z0-9]/.test(ch)
+}
+
+/** seg 内最后一个句分隔符位置（标识符内部的点不计） */
+function lastSepIndex(seg: string): number {
+  let last = -1
+  for (const s of SENTENCE_SEPS) {
+    if (s === '.') {
+      for (let i = seg.length - 1; i >= 0; i--) {
+        if (seg[i] !== '.') continue
+        const prev = i > 0 ? (seg[i - 1] ?? '') : ''
+        const next = i + 1 < seg.length ? (seg[i + 1] ?? '') : ''
+        if (isAlnumChar(prev) && isAlnumChar(next)) continue // node.js 内部点
+        if (i > last) last = i
+        break
+      }
+    } else {
+      const i = seg.lastIndexOf(s)
+      if (i > last) last = i
+    }
+  }
+  return last
+}
+
+/** seg 内第一个句分隔符位置（标识符内部的点不计） */
+function firstSepIndex(seg: string): number {
+  let first = -1
+  for (const s of SENTENCE_SEPS) {
+    if (s === '.') {
+      for (let i = 0; i < seg.length; i++) {
+        if (seg[i] !== '.') continue
+        const prev = i > 0 ? (seg[i - 1] ?? '') : ''
+        const next = i + 1 < seg.length ? (seg[i + 1] ?? '') : ''
+        if (isAlnumChar(prev) && isAlnumChar(next)) continue
+        if (first < 0 || i < first) first = i
+        break
+      }
+    } else {
+      const i = seg.indexOf(s)
+      if (i >= 0 && (first < 0 || i < first)) first = i
+    }
+  }
+  return first
+}
+
 /** 宾语尾部语气/结构词（截断剥离——「MySQL 做主库」→「MySQL 主库」去虚词） */
 const TAIL_STRIP = ['的', '了', '吗', '呢', '吧', '啊', '和', '以及', '与', '或者', '等']
 
@@ -117,8 +213,21 @@ interface StoredEdge {
   occurredAt: number
   /** 被取代/删除软标记：>= now 时该边从活跃视图消失（asOf 回放可见） */
   invalidAt?: number
+  /**
+   * 1.1.1 重断言复活时间：同一三元组被新的非取代条目重新确立时记录。
+   * 活跃性判定：invalidAt ≤ now < reassertedAt 期间为失效（asOf 回放忠实还原
+   * 「失效期间」），now ≥ reassertedAt 复活——纯 delete invalidAt 会抹掉失效期。
+   */
+  reassertedAt?: number
   entryIds: string[]
   confidence: number
+}
+
+/** 1.1.1：边在时刻 now 是否失效（invalidAt 已过且未被更晚的重断言复活） */
+function isEdgeInvalidAt(edge: StoredEdge, now: number): boolean {
+  if (edge.invalidAt === undefined) return false
+  if (edge.invalidAt > now) return false
+  return edge.reassertedAt === undefined || edge.reassertedAt > now
 }
 
 /** 图谱统计（status 可观测 / 增量一致性对拍） */
@@ -157,10 +266,17 @@ export function ruleExtractTriples(text: string): Triple[] {
       cursor = idx + rel.length
       const subject = preprocessHead(norm, idx)
       const object = preprocessTail(norm, cursor, rel)
-      if (!validEntity(subject) || !validEntity(object) || subject === object) continue
-      const confidence = shapeConfidence(subject, object, weight)
-      if (confidence < CONFIDENCE_FLOOR) continue
-      found.push({ subject, relation: rel, object, confidence })
+      // 1.1.1 裸「是」降噪：双侧均纯 CJK 时跳过——「今天是周三」「这是对的」类日常句
+      // 产出垃圾三元组且 0.9 置信直通下限；任一侧含拉丁/数字（专名形态）仍产出
+      if (rel === '是' && !/[a-z0-9]/.test(subject) && !/[a-z0-9]/.test(object)) continue
+      if (!validEntity(subject)) continue
+      // 1.5.0（模块 N）：宾语连词拆分——「A uses B and C」「A 使用 B、C」逐并列产出
+      for (const obj of splitConjuncts(object)) {
+        if (!validEntity(obj) || subject === obj) continue
+        const confidence = shapeConfidence(subject, obj, weight)
+        if (confidence < CONFIDENCE_FLOOR) continue
+        found.push({ subject, relation: rel, object: obj, confidence })
+      }
     }
   }
   // 去重：同三元组只留最高置信；再按置信度降序稳定
@@ -192,11 +308,7 @@ function indexOfWord(text: string, word: string, from: number): number {
 /** 主语：取句内最后一个分隔符后的片段，剥指示词前缀，去首尾空白与连接词 */
 function preprocessHead(text: string, end: number): string {
   let seg = text.slice(0, end)
-  let lastSep = -1
-  for (const s of SENTENCE_SEPS) {
-    const i = seg.lastIndexOf(s)
-    if (i > lastSep) lastSep = i
-  }
+  const lastSep = lastSepIndex(seg)
   if (lastSep >= 0) seg = seg.slice(lastSep + 1)
   for (const p of SUBJECT_PREFIXES) {
     if (seg.startsWith(p)) {
@@ -205,17 +317,16 @@ function preprocessHead(text: string, end: number): string {
     }
   }
   seg = trimEdge(seg)
+  // 1.5.0（模块 N）：主语尾部系动词剥除——'fs is part of the core' 的主语是 'fs'
+  // 而非 'fs is'（is/was/are/were/be 尾缀不构成实体名）
+  seg = seg.replace(/\s+(?:is|was|are|were|be)$/, '')
   return seg.slice(0, 24)
 }
 
 /** 宾语：取到句分隔符前；遇下一关系词提前截断（嵌套关系优先拆分主句）；剥离尾部虚词 */
 function preprocessTail(text: string, start: number, rel: string): string {
   let seg = text.slice(start)
-  let firstSep = -1
-  for (const s of SENTENCE_SEPS) {
-    const i = seg.indexOf(s)
-    if (i >= 0 && (firstSep < 0 || i < firstSep)) firstSep = i
-  }
+  const firstSep = firstSepIndex(seg)
   if (firstSep >= 0) seg = seg.slice(0, firstSep)
   // 嵌套关系提前截断：按长度降序找第一个出现在宾语中的其他关系词
   let cutAt = -1
@@ -235,7 +346,21 @@ function preprocessTail(text: string, start: number, rel: string): string {
     }
   } while (seg !== prev)
   seg = trimEdge(seg)
+  // 1.5.0（模块 N）：宾语前导冠词剥除（'readfile returns a promise' → 'promise'）
+  seg = seg.replace(/^(?:a|an|the)\s+/, '')
   return seg.slice(0, 24)
+}
+
+/** 1.5.0（模块 N）：宾语连词拆分——空格连接的 and/or/与/和 与顿号「、」按并列切分。
+ * 高精度取向：不拆无空格的「与/和」（避免切坏「和平」「参与」类词内字）。 */
+const CONJUNCT_SPLIT = /\s+(?:and|or|与|和)\s+|\s*、\s*/
+
+function splitConjuncts(object: string): string[] {
+  const parts = object
+    .split(CONJUNCT_SPLIT)
+    .map((p) => trimEdge(p))
+    .filter((p) => p.length > 0)
+  return parts.length > 0 ? parts : [object]
 }
 
 /** 去首尾空白与连接标点（归一化实体保留，避免尾部残留 ','） */
@@ -246,9 +371,13 @@ function trimEdge(s: string): string {
 /** 实体有效性：长度 2-24、不含关系词自身、不含敏感 */
 function validEntity(s: string): boolean {
   if (s.length < 2 || s.length > 24) return false
-  if (/[A-Za-z]+/.test(s) && /^[a-z0-9_ ]+$/.test(s) === false && /[\u0080-\uffff]/.test(s) === false) return false
+  // 1.1.1：英文实体允许 . + -（node.js / c++ / koa-router 等技术栈专名此前被拒，
+  // 无法进图）；仍拒绝混排中文以外的其他unicode噪声
+  if (/[A-Za-z]+/.test(s) && /^[a-z0-9_ .+-]+$/.test(s) === false && /[\u0080-\uffff]/.test(s) === false) {
+    return false
+  }
   // 只含英文标点/符号 → 无效
-  if (/^[\s\-_.:：,，;；/\\()（）'"]+$/.test(s)) return false
+  if (/^[\s\-_.:：,，;；+/\\()（）'"]+$/.test(s)) return false
   return true
 }
 
@@ -270,6 +399,18 @@ export class TemporalGraph implements GraphRecallSource {
   /** 实体 → 提及该实体的条目 id 集（图召回反查用） */
   private incident = new Map<string, Set<string>>()
   private lastSeen = new Map<string, number>()
+  /**
+   * 1.1.1 对齐层：实体特异 token 倒排（token → 实体键集）。
+   * 自然语言查询（「用户喜欢什么编辑器」）与记忆侧主语（「编辑器」为被截断的原文
+   * 片段）此前**零对齐机制**——查询实体串与图键精确匹配，miss 即全空。对齐层把
+   * 查询 token 与实体 token 的共享面作为召回信号（共享 ≥2 个特异 token，或短实体
+   * 共享 ≥1），hub token（出现在过多实体中）不参与。
+   */
+  private tokenIndex = new Map<string, Set<string>>()
+  /** 对齐层 hub 护栏：posting 超过该数的 token 不参与对齐（与聚类护栏同量级） */
+  private static readonly ALIGN_MAX_DF = 64
+  /** 对齐层返回实体数上限（防大图广播） */
+  private static readonly ALIGN_MAX_ENTITIES = 8
   private maxEntities: number
   private evicted = 0
 
@@ -284,6 +425,12 @@ export class TemporalGraph implements GraphRecallSource {
   private ensureEntity(entity: string): void {
     if (!this.outgoing.has(entity)) {
       this.outgoing.set(entity, new Map())
+      // 对齐层索引：新实体键的特异 token 入倒排（图键已是规范形）
+      for (const t of tokenize(entity)) {
+        const set = this.tokenIndex.get(t)
+        if (set) set.add(entity)
+        else this.tokenIndex.set(t, new Set([entity]))
+      }
     }
     if (!this.incident.has(entity)) {
       this.incident.set(entity, new Set())
@@ -304,8 +451,39 @@ export class TemporalGraph implements GraphRecallSource {
       this.outgoing.delete(entity)
       this.incident.delete(entity)
       this.lastSeen.delete(entity)
+      // 对齐层索引同步清理（该实体各 token 的 posting 集合中移除）
+      for (const t of tokenize(entity)) {
+        const set = this.tokenIndex.get(t)
+        if (!set) continue
+        set.delete(entity)
+        if (set.size === 0) this.tokenIndex.delete(t)
+      }
       this.evicted++
     }
+  }
+
+  /**
+   * 1.1.1 对齐层：给定查询 token 集，返回共享足够特异 token 的图实体键。
+   * 判定：共享 ≥ 2 个特异 token；实体自身 token 数 ≤ 2（短专名）时共享 ≥ 1 即命中。
+   * 确定性排序（共享数降序、键字典序兜底），上限 ALIGN_MAX_ENTITIES；纯函数式只读。
+   */
+  alignByTokens(tokens: readonly string[]): readonly string[] {
+    if (tokens.length === 0 || this.tokenIndex.size === 0) return []
+    const shared = new Map<string, number>()
+    for (const t of new Set(tokens)) {
+      const postings = this.tokenIndex.get(t)
+      if (postings === undefined || postings.size > TemporalGraph.ALIGN_MAX_DF) continue
+      for (const entity of postings) shared.set(entity, (shared.get(entity) ?? 0) + 1)
+    }
+    const out: Array<{ key: string; n: number; size: number }> = []
+    for (const [key, n] of shared) {
+      const entityTokenCount = tokenize(key).length
+      if (n >= 2 || (entityTokenCount <= 2 && n >= 1)) out.push({ key, n, size: entityTokenCount })
+    }
+    return out
+      .sort((a, b) => b.n - a.n || (a.key < b.key ? -1 : 1))
+      .slice(0, TemporalGraph.ALIGN_MAX_ENTITIES)
+      .map((x) => x.key)
   }
 
   /**
@@ -333,20 +511,33 @@ export class TemporalGraph implements GraphRecallSource {
     confidence: number,
     invalid: boolean,
   ): number {
-    this.ensureEntity(subject)
-    this.ensureEntity(target)
-    const bucket = this.outgoing.get(subject)!
-    const key = this.edgeKey(relation, target)
+    // 1.1.1：实体以规范键入图（大小写/空白/尾标点变体归一，杜绝同义异形实体分裂）
+    const s = normalizeEntityKey(subject)
+    const t = normalizeEntityKey(target)
+    if (!s || !t || s === t) return 0
+    this.ensureEntity(s)
+    this.ensureEntity(t)
+    const bucket = this.outgoing.get(s)!
+    const key = this.edgeKey(relation, t)
     const existing = bucket.get(key)
     if (existing) {
       if (!existing.entryIds.includes(entry.id)) existing.entryIds.push(entry.id)
       existing.occurredAt = Math.max(existing.occurredAt, entry.updatedAt)
       existing.confidence = Math.max(existing.confidence, confidence)
-      if (invalid && existing.invalidAt === undefined) existing.invalidAt = entry.updatedAt
+      if (invalid) {
+        if (existing.invalidAt === undefined) existing.invalidAt = entry.updatedAt
+      } else if (existing.invalidAt !== undefined) {
+        // 1.1.1 重断言复活：同一三元组被新的非取代条目重新确立时，记录复活时间——
+        // 此前 invalidAt 只设不清，「A 使用 X」被取代后用户重新确立同一事实，
+        // 该边在图召回中永久死亡。reassertedAt 保留失效期供 asOf 回放忠实还原。
+        if (existing.reassertedAt === undefined || entry.updatedAt > existing.reassertedAt) {
+          existing.reassertedAt = entry.updatedAt
+        }
+      }
     } else {
       const edge: StoredEdge = {
         relation,
-        target,
+        target: t,
         occurredAt: entry.updatedAt,
         entryIds: [entry.id],
         confidence,
@@ -354,10 +545,10 @@ export class TemporalGraph implements GraphRecallSource {
       }
       bucket.set(key, edge)
     }
-    this.incident.get(subject)!.add(entry.id)
-    this.incident.get(target)!.add(entry.id)
-    this.touch(subject, entry.updatedAt)
-    this.touch(target, entry.updatedAt)
+    this.incident.get(s)!.add(entry.id)
+    this.incident.get(t)!.add(entry.id)
+    this.touch(s, entry.updatedAt)
+    this.touch(t, entry.updatedAt)
     return 1
   }
 
@@ -381,7 +572,7 @@ export class TemporalGraph implements GraphRecallSource {
     return touched
   }
 
-  /** 查询实体在邻域扩展后的拓扑得分（hop 惩罚 × 度数归一累积） */
+  /** 查询实体在邻域扩展后的拓扑得分（hop 惩罚 × 度数归一累积）；入参实体经规范键对齐 */
   neighborEntityScores(
     queryEntities: readonly string[],
     now: number,
@@ -389,7 +580,10 @@ export class TemporalGraph implements GraphRecallSource {
   ): Map<string, number> {
     const scores = new Map<string, number>()
     const seen = new Set<string>()
-    let frontier = [...new Set(queryEntities)].filter((e) => this.outgoing.has(e))
+    // 1.1.1：查询实体经规范键对齐（大小写/空白/尾标点差异不再 miss）
+    let frontier = [...new Set(queryEntities.map(normalizeEntityKey))].filter(
+      (e) => e.length > 0 && this.outgoing.has(e),
+    )
     for (const e of frontier) seen.add(e)
     for (let hop = 1; hop <= maxHop && frontier.length > 0; hop++) {
       const hopFactor = 1 / Math.pow(hop, HOP_DECAY)
@@ -401,7 +595,7 @@ export class TemporalGraph implements GraphRecallSource {
         const degree = bucket.size
         const contribution = hopFactor * (1 / (1 + Math.log1p(degree)))
         for (const edge of bucket.values()) {
-          if (edge.invalidAt !== undefined && edge.invalidAt <= now) continue
+          if (isEdgeInvalidAt(edge, now)) continue
           scores.set(edge.target, (scores.get(edge.target) ?? 0) + contribution)
           if (!seen.has(edge.target)) {
             seen.add(edge.target)
@@ -414,10 +608,34 @@ export class TemporalGraph implements GraphRecallSource {
     return scores
   }
 
-  /** 反查：实体 → 提及该实体的条目 id 集 */
+  /** 反查：实体 → 提及该实体的条目 id 集（入参经规范键对齐） */
   entryIdsByEntity(entity: string): readonly string[] {
-    const set = this.incident.get(entity)
+    const set = this.incident.get(normalizeEntityKey(entity))
     return set ? [...set] : []
+  }
+
+  /**
+   * 1.2.0（DESIGN-1.2 模块 E）：实体在时刻 now 的活跃出边（推理线遍历入口）。
+   * 只返回 isEdgeInvalidAt 判定活跃的边（asOf 时间线正确性由这里保证——推理线
+   * 不能穿越已被取代/软删除失效的关系）；按 (target, relation) 字典序确定性排序，
+   * 使链枚举与实体插入顺序无关。
+   * 1.3.0（DESIGN-1.3 模块 G）注：深情景回放（条目层日志回放）下调用方应使用
+   * buildGraph(replayAsOf(...)) 重建 T 时刻图视图——occurredAt 是「最近一次触碰该边
+   * 的写入时刻」（取代标记回写也会推高它），不等于「关系发生时刻」，故此处不做
+   * occurredAt ≤ now 过滤（1.2.0 已锁定的 asOf 语义保持逐字节不变）。
+   */
+  activeOutEdges(
+    entity: string,
+    now: number,
+  ): ReadonlyArray<{ relation: string; target: string; confidence: number; occurredAt: number }> {
+    const bucket = this.outgoing.get(normalizeEntityKey(entity))
+    if (!bucket) return []
+    const out: Array<{ relation: string; target: string; confidence: number; occurredAt: number }> = []
+    for (const e of bucket.values()) {
+      if (isEdgeInvalidAt(e, now)) continue
+      out.push({ relation: e.relation, target: e.target, confidence: e.confidence, occurredAt: e.occurredAt })
+    }
+    return out.sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : a.relation < b.relation ? -1 : 1))
   }
 
   /** 图谱统计（status 可观测 / 与 buildGraph 全量重建对拍） */
@@ -428,8 +646,8 @@ export class TemporalGraph implements GraphRecallSource {
     for (const bucket of this.outgoing.values()) {
       for (const e of bucket.values()) {
         edges++
-        if (e.invalidAt === undefined || e.invalidAt > now) activeEdges++
-        if (e.invalidAt !== undefined && e.invalidAt <= now) supersededEdges++
+        if (isEdgeInvalidAt(e, now)) supersededEdges++
+        else activeEdges++
       }
     }
     return {
@@ -439,6 +657,97 @@ export class TemporalGraph implements GraphRecallSource {
       supersededEdges,
       evicted: this.evicted,
     }
+  }
+
+  /**
+   * 1.5.0（DESIGN-1.5 模块 L）：时刻 now 的活跃边全量清单（图维 diff 的数据源）。
+   * 按 (from, relation, target) 字典序确定性排序（与 activeOutEdges 同排序约定）；
+   * 只含 isEdgeInvalidAt 判定活跃的边（失效/复活时间线语义与推理线一致）。
+   */
+  activeEdgeList(
+    now = Date.now(),
+  ): ReadonlyArray<{ from: string; relation: string; target: string; confidence: number }> {
+    const out: Array<{ from: string; relation: string; target: string; confidence: number }> = []
+    for (const [from, bucket] of this.outgoing) {
+      for (const e of bucket.values()) {
+        if (isEdgeInvalidAt(e, now)) continue
+        out.push({ from, relation: e.relation, target: e.target, confidence: e.confidence })
+      }
+    }
+    return out.sort(edgeListCompare)
+  }
+}
+
+/** activeEdgeList 的确定性排序：(from, relation, target) 字典序 */
+function edgeListCompare(
+  a: { from: string; relation: string; target: string },
+  b: { from: string; relation: string; target: string },
+): number {
+  if (a.from !== b.from) return a.from < b.from ? -1 : 1
+  if (a.relation !== b.relation) return a.relation < b.relation ? -1 : 1
+  if (a.target !== b.target) return a.target < b.target ? -1 : 1
+  return 0
+}
+
+/**
+ * 1.5.0（DESIGN-1.5 模块 L）：图维 diff 的一条边（实体-关系-实体）。
+ */
+export interface GraphDiffEdge {
+  from: string
+  relation: string
+  to: string
+}
+
+/** 1.5.0（模块 L）：两个时刻语料的图视图差异（纯函数、确定性） */
+export interface GraphDiff {
+  /** diff 终点时刻（活跃性判定基准） */
+  until: number
+  beforeEntities: number
+  afterEntities: number
+  /** T2 图有、T1 图无的活跃边（activeEdgeList 序） */
+  addedEdges: GraphDiffEdge[]
+  /** T1 图有、T2 图无的活跃边（新关系确立 / 取代失效 / tombstone 消失） */
+  removedEdges: GraphDiffEdge[]
+  addedEdgeCount: number
+  removedEdgeCount: number
+}
+
+/**
+ * 1.5.0（DESIGN-1.5 模块 L）：图维时间对账——两个回放快照各自重建图视图后
+ * 对活跃边集合做差集（T1↔T2 期间「知识图谱发生了什么」的实体/关系级答案）。
+ *
+ * 语义与 diffReplay（条目维）互补：added 边 = 新关系确立（新条目抽取或重断言复活）；
+ * removed 边 = 关系消失（携带该边的唯一条目被 tombstone，或其条目被取代标注）。
+ * 纯函数：buildGraph 双侧重建（corpus 各自时点状态），活跃性以 until 为基准；
+ * 派生数组继承 activeEdgeList 的确定性排序。
+ */
+export function diffGraphs(
+  before: readonly MemoryEntry[],
+  after: readonly MemoryEntry[],
+  until: number,
+  maxEntities: number = GRAPH_DEFAULT_MAX_ENTITIES,
+): GraphDiff {
+  const g1 = buildGraph(before, maxEntities)
+  const g2 = buildGraph(after, maxEntities)
+  const key = (f: string, r: string, t: string) => `${f}\u0000${r}\u0000${t}`
+  const set1 = new Map(g1.activeEdgeList(until).map((x) => [key(x.from, x.relation, x.target), x]))
+  const set2 = new Map(g2.activeEdgeList(until).map((x) => [key(x.from, x.relation, x.target), x]))
+  const added: GraphDiffEdge[] = []
+  const removed: GraphDiffEdge[] = []
+  for (const [k, x] of set2) {
+    if (!set1.has(k)) added.push({ from: x.from, relation: x.relation, to: x.target })
+  }
+  for (const [k, x] of set1) {
+    if (!set2.has(k)) removed.push({ from: x.from, relation: x.relation, to: x.target })
+  }
+  return {
+    until,
+    beforeEntities: g1.stats(until).entities,
+    afterEntities: g2.stats(until).entities,
+    addedEdges: added,
+    removedEdges: removed,
+    addedEdgeCount: added.length,
+    removedEdgeCount: removed.length,
   }
 }
 
@@ -496,9 +805,14 @@ export function graphLineScores(
   const maxHop = opts.maxHop ?? GRAPH_DEFAULT_MAX_HOP
   const tauMs = opts.tauMs ?? GRAPH_TAU_MS
   const entities = queryEntities(query)
+  // 1.1.1 对齐层：查询 token 直接对齐图实体——自然语言问句（「用户喜欢什么编辑器」）
+  // 与记忆侧主语（被截断的原文片段）零精确匹配时，共享特异 token 的实体仍可作种子
+  const aligned =
+    typeof graph.alignByTokens === 'function' ? graph.alignByTokens(tokenize(query)) : ([] as readonly string[])
+  const seeds = [...entities, ...aligned]
   const scores = new Map<string, number>()
-  if (entities.length === 0) return scores
-  const nbr = graph.neighborEntityScores(entities, now, maxHop)
+  if (seeds.length === 0) return scores
+  const nbr = graph.neighborEntityScores(seeds, now, maxHop)
   for (const [entity, topo] of nbr) {
     for (const id of graph.entryIdsByEntity(entity)) {
       const entry = entriesById.get(id)

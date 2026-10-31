@@ -13,8 +13,20 @@
  * 纯函数、零 IO，可独立单测。
  */
 import { randomUUID } from 'node:crypto'
-import { contentHash } from './store'
+import { contentHash } from './hash'
 import type { MemoryEntry, MemoryKind, MemorySource } from './types'
+
+/**
+ * 代理对安全截断（1.1.1）：截断点落在高位代理（U+D800-DBFF，emoji/扩展 B 汉字的前半）
+ * 上时回退一位——孤立代理落盘后 JSON 合法但渲染乱码，NFKC/小写归一再处理行为不定。
+ */
+export function safeSlice(text: string, max: number): string {
+  const s = text.slice(0, max)
+  if (s.length === 0) return s
+  const last = s.charCodeAt(s.length - 1)
+  if (last >= 0xd800 && last <= 0xdbff) return s.slice(0, -1)
+  return s
+}
 
 /** 记忆条目组装输入（路径无关的语义视图） */
 export interface EntryInput {
@@ -49,7 +61,8 @@ export function makeEntry(input: EntryInput): MemoryEntry {
   const trimmed = input.content.trim()
   // 指纹针对「trim 后完整正文」而非截断版：兼容 0.10.0 语义——超长内容也按原全文
   // 哈希（跨路径 dedup 键与既有 id 断言一致），存储正文才按 maxChars 截断。
-  const body = trimmed.slice(0, input.maxChars)
+  // 1.1.1：截断改用 safeSlice（代理对安全，杜绝孤立代理落盘）。
+  const body = safeSlice(trimmed, input.maxChars)
   // 清洗 tags：仅字符串 → trim → 去空白 → 去重（保持首现顺序）
   const cleanTags: string[] = []
   const seen = new Set<string>()

@@ -21,7 +21,7 @@
  */
 import { normalizeForMatch, PREFERENCE_SIGNAL_TERMS } from './capture'
 import { tokenize } from './engine'
-import { contentHash } from './store'
+import { contentHash } from './hash'
 import { isSuperseded, SUPERSEDE_TAG_PREFIX, SUPERSEDED_BY_TAG_PREFIX } from './entry-factory'
 import type { MemoryEntry, MemoryKind } from './types'
 
@@ -318,6 +318,16 @@ export function distilledLayer(entry: MemoryEntry): DistillLayer | undefined {
     if (!t.startsWith(DISTILLED_LAYER_TAG_PREFIX)) continue
     const v = t.slice(DISTILLED_LAYER_TAG_PREFIX.length)
     if (v === 'abstract' || v === 'procedural') return v
+  }
+  return undefined
+}
+
+/** 取蒸馏主题（distilled-theme:<簇名>；非蒸馏条目返回 undefined）——代际治理的归组键 */
+export function distilledTheme(entry: MemoryEntry): string | undefined {
+  for (const t of entry.tags) {
+    if (!t.startsWith(DISTILLED_THEME_TAG_PREFIX)) continue
+    const v = t.slice(DISTILLED_THEME_TAG_PREFIX.length)
+    if (v) return v
   }
   return undefined
 }

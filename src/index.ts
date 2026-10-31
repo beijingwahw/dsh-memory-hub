@@ -45,11 +45,45 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
   const storageDir = cfg.storageDir || join(homedir(), '.dsh', 'memory-hub')
   const filePath = join(storageDir, 'memories.jsonl')
 
-  const storeP = JsonlMemoryStore.open(filePath, (m) => log.info(m))
+  // 1.4.0（DESIGN-1.4 模块 I）：会话级加密口令——config 显式传入优先，
+  // 其次 DSH_MEMORY_PASSPHRASE 环境变量（推荐：口令不落配置文件）；
+  // 空缺省 = 明文存储（与 1.3.0 逐字节一致）。加密库漏配口令时 open 显式失败
+  //（绝不把密文行当损坏行静默清空），storeP catch 记日志、工具不注册——行为显式可诊断。
+  const passphrase = cfg.passphrase || process.env['DSH_MEMORY_PASSPHRASE'] || ''
+  const storeP = JsonlMemoryStore.open(
+    filePath,
+    (m) => log.info(m),
+    passphrase !== '' ? { passphrase } : undefined,
+  ).then(async (store) => {
+    // 1.5.0（DESIGN-1.5 模块 K）：启动期口令轮换——DSH_MEMORY_NEW_PASSPHRASE 定义且
+    // 不等于当前有效口令时触发一次 changePassphrase（非空 = 换新口令/启用加密；
+    // 空串 = 解密回退为明文库）。逐行原序重写，深回放历史完整保留；失败仅告警
+    // 不阻断启动（库保持原口令/原形态可用，改完口令后应移除该环境变量）。
+    const nextPw = process.env['DSH_MEMORY_NEW_PASSPHRASE']
+    if (nextPw !== undefined && nextPw !== passphrase) {
+      try {
+        await store.changePassphrase(nextPw)
+        log.info(
+          'memory store passphrase rotated via DSH_MEMORY_NEW_PASSPHRASE (%s)',
+          nextPw !== '' ? 'new passphrase active' : 'decrypted back to plaintext',
+        )
+      } catch (err) {
+        metrics.errors++
+        log.warn('passphrase rotation failed (store keeps current form): %s', errorMessage(err))
+      }
+    }
+    return store
+  })
 
-  // 1.1.0（DESIGN-1.1 模块 C）：时序知识图谱运行时——仅 graphEnabled 显式开启时构建
-  // （缺省 false 不构建，四工具无图行为与 1.0.0 逐字节一致，G10/G11）
-  const graph = cfg.graphEnabled ? new TemporalGraph(cfg.graphMaxEntities) : undefined
+  // 1.1.1：dispose 竞态防护——dispose 在 store open 完成前触发（慢磁盘/启动即热重载）时，
+  // storeP 的 then 回调仍会按挂载顺序执行；该标志让注册链/就绪链入口感知卸载，
+  // 直接关闭 store 返回，杜绝「工具注册到已关闭的 store 且 disposer 永不执行」。
+  let disposed = false
+
+  // 1.1.0（DESIGN-1.1 模块 C）+ 1.2.0（DESIGN-1.2 模块 E）：时序知识图谱运行时——
+  // graphEnabled（第四召回线）或 inferEnabled（第五推理线）任一显式开启时构建
+  // （缺省均 false 不构建，四工具无图行为与 1.0.0 逐字节一致，G10/G11）
+  const graph = cfg.graphEnabled || cfg.inferEnabled ? new TemporalGraph(cfg.graphMaxEntities) : undefined
 
   async function fileBytes(): Promise<number> {
     try {
@@ -64,6 +98,15 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
   const toolDisposers: Array<() => void> = []
   storeP
     .then((store) => {
+      // 1.1.1：dispose 已先行触发 → 不再注册工具（否则注册到已关闭的 store 上，
+      // 且这些工具的 disposer 因 dispose 已返回而永不执行，在宿主上泄漏）
+      if (disposed) {
+        void store.close().catch((err: unknown) => {
+          metrics.errors++
+          log.warn('store close failed (late open): %s', errorMessage(err))
+        })
+        return
+      }
       const registrations: Array<() => () => void> = [
         () =>
           ctx.tools.register(
@@ -72,6 +115,8 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
               supersedeMode: cfg.supersedeMode,
               // 1.1.0（模块 D1）：矛盾共存显式写入路径（默认 off，与自动捕获同一判定级联）
               conflictMode: cfg.conflictMode,
+              // 1.1.1：矛盾检测独立窗口（默认 30 天，跨周信念反转可检测）
+              conflictWindowMs: cfg.conflictWindowMs,
               ...(graph ? { graph } : {}),
             }),
           ),
@@ -89,9 +134,21 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
                 ? { decayHalfLifeMs: cfg.recallDecayHalfLifeDays * 24 * 60 * 60 * 1000 }
                 : { decay: false },
               // 1.0.0（模块 B2）：融合模式与语义叠加由 config 注入（默认 interpolate/off = 0.10.0 语义）
-              { fusionMode: cfg.fusionMode, semanticBoost: cfg.semanticBoost },
+              // 1.1.1：graphEnabled=true 时经默认值注入图线（原实现配置开关从不生效）
+              // 1.2.0：inferEnabled/inferMaxHops 同形态注入推理线（默认 false/off = 1.1.1 语义）
+              // 1.5.0：vectorEnabled 同形态注入向量第六线（默认 false = 1.4.0 语义）
+              {
+                fusionMode: cfg.fusionMode,
+                semanticBoost: cfg.semanticBoost,
+                ...(cfg.graphEnabled ? { graphEnabled: true } : {}),
+                ...(cfg.inferEnabled ? { inferEnabled: true } : {}),
+                ...(cfg.vectorEnabled ? { vectorEnabled: true } : {}),
+                inferMaxHops: cfg.inferMaxHops,
+              },
               // 1.1.0（模块 C2）：图谱第四召回线运行时注入（graphEnabled 开启时；否则不生效）
               graph,
+              // 1.3.0（模块 G）：情景回放重建 T 时刻图视图的实体上限（与运行时图同配置）
+              cfg.graphMaxEntities,
             ),
           ),
         () => ctx.tools.register(createMemoryForgetTool(store, logger, metrics, graph ?? undefined)),
@@ -99,6 +156,8 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
           ctx.tools.register(
             createMemoryStatusTool(store, fileBytes, logger, metrics, {
               themesDefault: cfg.themes,
+              // 1.5.1（DESIGN-1.5 模块 P）：可视化页导出目录（存储目录；exportHtml 请求时写入）
+              htmlDir: storageDir,
               // 1.1.0（模块 B3/C4）：巩固状态与图谱可观测（仅 auto/开启时输出，缺省零行为变化）
               ...(cfg.consolidationMode === 'auto' ? { consolidationMode: cfg.consolidationMode as 'auto' } : {}),
               ...(cfg.recallThreshold !== undefined ? { recallThreshold: cfg.recallThreshold } : {}),
@@ -132,7 +191,16 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
     const logs = sources?.sessionLogs ?? []
     if (docs.length === 0 && logs.length === 0) return
     // 1.0.0（UF-1.0）：导入前读当前库内容做库内去重（跨 id 前缀互认，疑点 7 闭环）
-    const existing = await storeP.then((store) => store.list())
+    // 1.1.1：此前的 await 位于所有 try/catch 之外——「配置了导入源且 store open 失败」时
+    // 该 Promise 拒绝被 void 丢弃为 unhandled rejection（Node ≥15 默认崩溃宿主进程）。
+    let existing: Awaited<ReturnType<JsonlMemoryStore['list']>>
+    try {
+      existing = await storeP.then((store) => store.list())
+    } catch (err) {
+      metrics.errors++
+      log.warn('import skipped (store open failed): %s', errorMessage(err))
+      return
+    }
     for (const path of docs) {
       try {
         const text = await readFile(path, 'utf8')
@@ -260,7 +328,8 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
 
   // -------------------------------------------------------------------------
   // 自动捕获：有界串行队列（FIFO promise 链 + 背压上限）
-  // 密集事件不并发风暴；超过队列深度上限时丢弃最早期任务并计数（保护内存有界）。
+  // 密集事件不并发风暴；超过队列深度上限时丢弃**最新**事件并计数（保护内存有界，
+  // 保留已在处理的早期事件；1.1.1 修正注释与实现不符——实现一直是最新的被拒之门外）。
   // -------------------------------------------------------------------------
   const MAX_PENDING_CAPTURES = 256
   let pendingCaptures = 0
@@ -291,7 +360,9 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
       ctx.on('session/event', (session: Session, event: SessionEvent) => {
         enqueueCapture(async () => {
           const store = await storeP
-          const workspace = session.header.cwd
+          // 1.1.1：header 可选链保护（与下方工具结果路径的 exec.agent?.session?.header?.cwd
+          // 同形态；header 缺失时 workspace=undefined = 全局共享记忆，而非每事件一次 TypeError）
+          const workspace = session.header?.cwd
           if (event.type === 'user/message') {
             const src = event.data.source
             // 只捕获真实用户输入，跳过插件注入/子代理上下文等合成消息
@@ -306,7 +377,9 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
                 dedupWindowMs: cfg.dedupWindowMs,
                 supersedeMode: cfg.supersedeMode,
                 // 1.1.0（模块 D1）：矛盾共存识别（默认 off = 1.0.0 行为）
-                ...(cfg.conflictMode === 'auto' ? { conflictMode: cfg.conflictMode } : {}),
+                ...(cfg.conflictMode === 'auto'
+                  ? { conflictMode: cfg.conflictMode, conflictWindowMs: cfg.conflictWindowMs }
+                  : {}),
               },
               metrics,
               workspace,
@@ -324,7 +397,9 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
                 dedupWindowMs: cfg.dedupWindowMs,
                 supersedeMode: cfg.supersedeMode,
                 // 1.1.0（模块 D1）：矛盾共存识别（默认 off = 1.0.0 行为）
-                ...(cfg.conflictMode === 'auto' ? { conflictMode: cfg.conflictMode } : {}),
+                ...(cfg.conflictMode === 'auto'
+                  ? { conflictMode: cfg.conflictMode, conflictWindowMs: cfg.conflictWindowMs }
+                  : {}),
               },
               metrics,
               workspace,
@@ -357,7 +432,9 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
               dedupWindowMs: cfg.dedupWindowMs,
               supersedeMode: cfg.supersedeMode,
               // 1.1.0（模块 D1）：矛盾共存识别（默认 off = 1.0.0 行为）
-              ...(cfg.conflictMode === 'auto' ? { conflictMode: cfg.conflictMode } : {}),
+              ...(cfg.conflictMode === 'auto'
+                ? { conflictMode: cfg.conflictMode, conflictWindowMs: cfg.conflictWindowMs }
+                : {}),
             },
             metrics,
             workspace,
@@ -372,11 +449,32 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
   let timer: ReturnType<typeof setInterval> | undefined
   if (cfg.ttlDays > 0) {
     timer = setInterval(() => void pruneOnce('periodic'), 6 * 60 * 60 * 1000)
+    // 1.1.1：自持定时器不阻止进程退出（宿主若依赖事件循环排空而未显式 dispose 插件，
+    // 该 6 小时句柄会挂住进程）；clearInterval 仍保留在 disposer 中
+    timer.unref?.()
   }
 
   storeP
     .then(async (store) => {
-      const stats = summarize(await store.list(), await fileBytes())
+      if (disposed) {
+        await store.close().catch((err: unknown) => {
+          metrics.errors++
+          log.warn('store close failed (late open): %s', errorMessage(err))
+        })
+        return
+      }
+      const all = await store.list()
+      // 1.1.1（P0 修复）：图种子加载——存量条目全量进图。图的设计注释一直声称
+      // 「重启后由条目重建」（buildGraph 工厂即为此准备），但此前从未在生产路径接线：
+      // 重启后图仅含本次会话新写入/导入的条目，第四召回线与 asOf 时间线回放对
+      // 占记忆库绝大多数的历史条目完全失效。upsertEdge 幂等合并保证与
+      // importSources 已增量加入的条目不冲突；list() 按 createdAt 升序回放，
+      // 取代/复活时间线语义正确。
+      if (graph) {
+        for (const e of all) graph.add(e)
+        log.info('graph seeded from store (%d entries)', all.length)
+      }
+      const stats = summarize(all, await fileBytes())
       log.info(
         'dsh-memory-hub ready (storage: %s, capture: %s, entries: %d, lines: %d, corrupt: %d)',
         storageDir,
@@ -396,6 +494,8 @@ export function apply(ctx: Context, config: Partial<MemoryHubConfig> = {}) {
 
   // 插件卸载：先停定时器与监听，再等待捕获队列排空（捕获栅栏），最后关闭存储句柄
   return async () => {
+    // 1.1.1：先行置位，取消仍在途的 storeP then 回调（工具注册/就绪日志/导入）
+    disposed = true
     if (timer) clearInterval(timer)
     for (const d of disposers) d()
     for (const d of toolDisposers) d()

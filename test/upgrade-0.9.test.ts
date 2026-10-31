@@ -381,24 +381,28 @@ describe('0.9.0 升级行为（16 项薄弱项探针转正）', () => {
   it('N: 同 id 同窗口多次 recall 只 flush 一次（抗刷）；错误上浮 errors 不静默', async () => {
     const store = await openStore()
     const upsertSpy = vi.spyOn(store, 'upsert')
+    // 1.1.1：热度 flush 迁移到 upsertMany 批量通道（单次落盘多行 + 单次 version++）
+    const upsertManySpy = vi.spyOn(store, 'upsertMany')
     const metrics = createMetrics()
     const storeTool = createMemoryStoreTool(store, 1000, undefined, metrics) as unknown as Toolish
     const recallTool = createMemoryRecallTool(store, 800, 8, undefined, metrics) as unknown as Toolish
     await storeTool.execute({ content: '记住发布前要跑全量测试' } as never)
     expect(upsertSpy.mock.calls.length).toBe(1) // 显式入库
 
-    // 连续两次 recall（同一微任务批次）：flush 合并为一次 upsert（0.8.0 为两次）
+    // 连续两次 recall（同一微任务批次）：flush 合并为一次批量回写（0.8.0 为两次逐条）
     await Promise.all([
       recallTool.execute({ query: '发布前测试' } as never),
       recallTool.execute({ query: '发布前测试' } as never),
     ])
     await new Promise((r) => setTimeout(r, 50))
     expect(metrics.recallCalls).toBe(2)
-    expect(upsertSpy.mock.calls.length).toBe(2) // 1 显式 + 1 合并 flush（而非 3）
-    const flushCall = upsertSpy.mock.calls.find(([e]) => e.accessCount >= 1)
-    expect(flushCall?.[0]?.accessCount).toBeGreaterThanOrEqual(1)
-    expect(flushCall?.[0]?.id).toBe((await store.list())[0]!.id)
+    expect(upsertManySpy.mock.calls.length).toBe(1) // 1 次合并批量 flush（而非 2 次逐条）
+    const flushBatch = upsertManySpy.mock.calls[0]?.[0]
+    expect(flushBatch?.length).toBe(1)
+    expect(flushBatch?.[0]?.accessCount).toBeGreaterThanOrEqual(1)
+    expect(flushBatch?.[0]?.id).toBe((await store.list())[0]!.id)
     upsertSpy.mockRestore()
+    upsertManySpy.mockRestore()
   })
 
   // ---- O：共享快照零拷贝 + 写后换代 ----
@@ -497,15 +501,16 @@ describe('0.9.0 质量门补位（剩余分支/行全覆盖）', () => {
     const recallTool = createMemoryRecallTool(store, 800, 8, (m) => logs.push(m), metrics) as unknown as Toolish
     await storeTool.execute({ content: '记住发布前要跑全量测试' } as never)
 
-    const upsertSpy = vi.spyOn(store, 'upsert')
-    upsertSpy.mockImplementationOnce(() => {
+    // 1.1.1：flush 走 upsertMany 批量通道——故障注入同步锚定到该通道
+    const upsertManySpy = vi.spyOn(store, 'upsertMany')
+    upsertManySpy.mockImplementationOnce(() => {
       throw new Error('flush boom') // 同步 throw → heat flush 外层 catch
     })
     await recallTool.execute({ query: '发布前测试' } as never)
     await new Promise((r) => setTimeout(r, 50))
     expect(metrics.errors).toBe(1)
     expect(logs.some((l) => l.includes('heat flush failed') && l.includes('flush boom'))).toBe(true)
-    upsertSpy.mockRestore()
+    upsertManySpy.mockRestore()
     await store.close()
   })
 

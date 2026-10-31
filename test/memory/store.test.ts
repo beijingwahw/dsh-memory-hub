@@ -3,22 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JsonlMemoryStore, contentHash } from '../../src/memory/store'
-import type { MemoryEntry } from '../../src/memory/types'
-
-function freshEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
-  const now = Date.now()
-  return {
-    id: `test-${now}-${Math.random().toString(36).slice(2, 8)}`,
-    kind: 'fact',
-    content: 'the quick brown fox',
-    tags: ['auto', 'fact'],
-    source: 'auto',
-    createdAt: now,
-    updatedAt: now,
-    accessCount: 0,
-    ...overrides,
-  }
-}
+import { freshEntry } from './utils'
 
 describe('JsonlMemoryStore', () => {
   it('contentHash 稳定且区分内容', () => {

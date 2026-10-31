@@ -1,282 +1,326 @@
 # Changelog
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+历史版本的设计全文见 `docs/history/`；本文件只保留**面向使用者的变更摘要**。
+
+## [1.5.1] - 2026-10-31
+
+可视化检索页版：roadmap「记忆时间轴 / 可视化检索页」项以仓库内可交付形态关闭。
+设计全文见 `docs/DESIGN-1.5.md` §9（模块 P）。
+
+### Added
+
+- **模块 P 可视化检索页（HTML 导出）**：`memory_status { exportHtml: true }` 导出单个
+  **自包含静态 HTML**（零外部依赖/零网络引用/可离线打开）写入存储目录
+  `memories-view.html`（0600，与记忆库同权限保护）并返回 `htmlPath`/`htmlBytes`——
+  记忆时间轴柱状视图（服务端确定性渲染，纯 HTML/CSS，新增/更新/热度/删除分色 +
+  悬停全量计数，≤90 桶窗口）+ 检索页（全量语料安全 JSON 内嵌，浏览器本地即时评分
+  排序——idf 加权拉丁词 + CJK 2-gram，类型过滤，DOM textContent 构建，不上传任何数据）；
+  确定性（同 payload 逐字节可复算）、注入安全（内嵌 JSON `\u003c` 转义——真实语料含
+  代码块尖括号下页面只允许两个合法 `</script>` 闭合）、`metrics.htmlExports` 观测；
+  导出为明文观看工件（与加密存储正交）；缺省（exportHtml 缺席）输出与 1.5.0 逐字节一致。
+- **评估门禁扩至 G1-G26**：G26 真实语料 1200 条全量导出——自包含零外链、注入安全、
+  确定性采样 50 id 全嵌入、时间轴与 `store.timeline(90)` 同源、固定 generatedAt 两次
+  渲染逐字节一致、POSIX 0600。
+
+### Changed
+
+- `createMemoryStatusTool` 新增 `opts.htmlDir`（插件入口注入存储目录；未配置时
+  exportHtml 显式失败）；`memory_status` 参数面新增 `exportHtml`（缺省输出形状不变）。
+
+### 工程纪律
+
+- 单元测试 601 → 612（新增 11：纯函数 5 / 工具面 6），eval 69 → 70，总量 670 → 682；
+  覆盖率门禁维持 ≥98/93/98。
+
+## [1.5.0] - 2026-10-31
+
+边界突破版：1.2-1.4 设计文档明文划出的**全部剩余边界**逐项收敛——口令轮换、图维 diff、
+本地 HNSW 向量第六召回线、双语实体抽取、记忆时间轴（roadmap 两项未勾选项落地）。
+设计全文见 `docs/DESIGN-1.5.md`。
+
+### Added
+
+- **模块 K 口令轮换与解密回退（DESIGN-1.4 未来工作收敛）**：`JsonlMemoryStore.changePassphrase`
+  ——逐行原序重写（深回放历史完整保留，仅换密钥外衣；损坏行原样换新外衣仍走隔离留证）；
+  加密→新口令（同口令再轮换 = 换盐密钥卫生）/ 加密→空口令（解密回明文）/ 明文→新口令 /
+  明文→明文 no-op 四态语义矩阵；tmp+fsync+rename 原子替换，失败文件保持原状且**不毒化写链**
+  （后续写入与 close 不受影响）；写锁被外部存活实例持有拒绝整文件重写（真子进程锁测试锁定）；
+  `DSH_MEMORY_NEW_PASSPHRASE` 环境变量启动期触发一次（换口令 / 空串解密回退 / 明文库启用加密三臂）。
+- **模块 L 图维时间对账（DESIGN-1.4 未来工作收敛）**：`TemporalGraph.activeEdgeList` +
+  `diffGraphs` 纯函数（双侧 buildGraph 重建 + 活跃边差集——added = 新关系确立 /
+  removed = tombstone 或取代失效）；`memory_status graphDiff` 参数（计数完整 + 边样本 ≤10，
+  渲染 `graph: entities B→A, +E −R edge(s)`）；缺省 diff 输出与 1.4.0 逐字节一致。
+- **模块 M 本地向量第六召回线（roadmap「向量召回后端（本地 HNSW）」落地）**：零依赖
+  确定性 HNSW——层指派 fnv1a 哈希驱动（无 Math.random）、**近邻多样性选择**（论文
+  Algorithm 4 + keepPruned 回填——单纯最近 M 个裁剪在簇状语料上图坍缩为不可达子图，
+  此为本次实现的关键工程发现）、底层度上限 2M、贪心下降 + ef 束搜索；向量空间与 A2
+  语义线同源（字符 3-gram + CJK 2-gram，sublinear TF·IDF + L2 归一化余弦）；interpolate
+  线性叠加（权重 0.3）/ RRF 第六条秩融合（仅向量可达候选补录 + 同 id max 合并）/
+  why.lines 溯源追加 `vector` 线；`VectorIndexCache` 按 (revision, 指纹) 复用；`vectorEnabled`
+  配置 + `memory_recall vector` 参数 + `metrics.vectorHits`；真实规模校准：3333 真实文档
+  HNSW vs 暴力全量 top-10 重叠 20/20 全一致、自检索 19/20、构建 7.2s/层高 3。
+- **模块 N 双语实体抽取（DESIGN-1.2 §5 / DESIGN-1.3 §4 独立课题收敛）**：关系词表双语扩展
+  （英文技术关系面 returns/throws/emits/supports/based on/written in/part of… + 中文对应面
+  基于/支持/返回/抛出/改为/换成…）；宾语连词拆分（`A uses B and C` / `A 使用 B、C` 逐并列
+  产出）；宾语前导冠词剥除 + 主语尾部系动词剥除 + **标识符内部点不再当句分隔**（node.js /
+  fs.readfile 主宾语保形——补全 1.1.1「专名入图」承诺）；1.1.1 锁定语义全部保持
+  （裸 the app 主语保留 / 词边界 / 置信度下限 / 去重）；无裸 is 关系（存现句不进图）。
+- **模块 O 记忆时间轴（roadmap「记忆时间轴」落地）**：`timelineFromRaw` 纯函数——append-only
+  日志单遍回放出按 UTC 日分桶的新增/删除/更新/纯热度事件流 + 存活总量走势（时钟偏斜钳 0、
+  旧格式 tombstone 折算首桶前基线、复活计 added）；`store.timeline`（加密库解码后分桶）；
+  `memory_status timeline` 参数（柱状渲染 `day │ ████ +A −R ~U (hH) = total`、≤31 桶截断）；
+  降级 store 按 createdAt 近似；`metrics.statusTimeline`。
+- **评估门禁扩至 G1-G25**：G23 向量真实规模（HNSW vs 暴力全量对拍 + 自检索 + 确定性 +
+  融合接线 + 缺省零回归）；G24 双语抽取真实规模（新关系面产出非零 + 确定性 + 图边落地）；
+  G25 边界操作真实规模（400 真实条目轮换保深回放 + diffGraphs 与手工差集一致 + 时间轴守恒）。
+
+### Changed
+
+- `fnv1a`/`semanticFeatures`（+ 计数版 `semanticFeatureCounts`）下沉 tokenize.ts、
+  `fingerprint` 下沉 hash.ts（engine re-export 零调用方变更——vector.ts 位于 engine 之下，
+  共享叶子设施避免循环依赖）；`MemoryStore` 可选新成员 `timeline?(cap?)`；
+  `memory_recall`/`memory_status` 参数面新增 `vector`/`graphDiff`/`timeline`（缺省输出形状
+  与 1.4.0 逐字节一致）。
+
+### 工程纪律
+
+- 缺省零回归：全部新能力默认关闭；开启前（含 vectorEnabled 显式 false）输出与 1.4.0
+  逐字节一致（bit-exact 断言 + 固定 now 全等门）；
+- 单元测试 528 → 601（新增 73：轮换 13 / 图维 8 / 时间轴 15 / 双语 11 / 向量 25），
+  eval 66 → 69，总量 594 → 670；覆盖率 98.4/93.09/98.9/98.4（门槛 98/93/98 维持）。
+
+## [1.4.0] - 2026-10-31
+
+纵深防御与时间分析版：roadmap 最后一项（会话级加密存储）+ DESIGN-1.3 两项未来工作（status 历史视图 / 回放 diff）落地。设计全文见 `docs/DESIGN-1.4.md`。
+
+### Added
+
+- **模块 I 会话级加密存储（可选 passphrase，roadmap 收官）**：`passphrase` 配置或
+  `DSH_MEMORY_PASSPHRASE` 环境变量开启后，记忆文件逐行 AES-256-GCM 认证加密落盘
+  （scrypt N=16384 派生密钥，密钥记录头存盐与 KDF 参数，AAD 绑定格式版本）——
+  **静态保密**（除头外零明文）+ **逐行防篡改**（认证失败走损坏行隔离留证通道）；
+  错口令/漏口令加载期显式失败（绝不表现为空库）；**明文库原位加密迁移逐行原序重写**
+  （append-only 深回放历史——旧内容版本/tombstone 删除时刻——逐行保留，仅换密文外衣）；
+  compact 与加密共存（解码合并后统一编码重写 + 头保留）；混合文件容忍（迁移中间态可读写，
+  compact 收敛全密文）；`diagnostics.encrypted` 加密形态可观测；口令绝不写日志。
+- **模块 J 时间分析**：`memory_status asOf` 历史快照视图（该时刻的记忆库统计——只含
+  当时存在的记忆/当时内容版本与取代矛盾状态，语料层字段封闭不掺运行时观测，冷热分层
+  以 asOf 为现在）；`memory_status { diffSince, asOf? }` T1↔T2 diff 视图（新增/消失/
+  内容变更/取代矛盾/纯热度六类归因，`diffReplay` 纯函数确定性，明细 ≤20 样本计数完整，
+  渲染 `[memory status diff ISO₁ → ISO₂] +A −R ~U (heat H)`）；`metrics.statusAsOf` 观测。
+- **评估门禁扩至 G1-G22**：G21 加密真实规模接地（400 条真实语料落盘零明文多锚点抽验、
+  迁移保深回放、错口令/漏口令显式失败）；G22 时间分析真实规模接地（G19 同构分阶段时间线
+  三分区 diff 与手算一致 + 工具面输出契约）。
+
+### Changed
+
+- `JsonlMemoryStore.open` 增加可选第三参 `{ passphrase? }`（缺省明文，与 1.3.0 逐字节一致）；
+  `memory_status` 参数面增加 `asOf`/`diffSince`（缺省输出形状与字节不变）；
+  `memory_recall asOf` 语义不变（模块 J 与之同源）。
+
+### 工程纪律
+
+- 缺省零回归：无口令 + 无时间参数时全部输出与 1.3.0 逐字节一致（plainCodec 恒等 +
+  时间分支缺席，既有 bit-exact 门全绿）；
+- 单元测试 495 → 528（新增 33：编解码 9 / 加密集成 13 / 时间视图 11），eval 64 → 66，
+  总量 559 → 594；覆盖率门禁维持 ≥98/93/98（新增源文件全路径覆盖）。
+
+## [1.3.0] - 2026-10-30
+
+时空完备版：从「图谱时间线回放」到「记忆库全量情景回放」。设计全文见 `docs/DESIGN-1.3.md`。
+
+### Added
+
+- **模块 G 情景回放（episodic replay）**：`memory_recall asOf` 深化——回到任意过去时刻召回，
+  语料为该时刻的**精确知识状态**（`replayAsOf` 纯函数按文件序回放 append-only JSONL 日志：
+  存在性 / 内容版本 / 取代与矛盾标注 / 访问热度全维度；写入时刻由既有写入协议锚定
+  `max(updatedAt, lastAccessAt)`）；图谱按回放语料全量重建 T 时刻图视图（未来条目的边
+  不存在、取代状态即当时快照——运行时图的 occurredAt 会被标记回写推高，深回放下不可靠）；
+  只读回放（不写热度，绕过索引缓存不污染当前语料指纹）；`metrics.asOfRecalls` 观测；
+  渲染前缀 `[memory recall @<ISO8601>]`；无 `listAsOf` 实现的存储降级为 createdAt 过滤。
+- **模块 H 推理证据链（`why.chains`）**：召回溯源从「infer 线贡献了分」升维到「凭什么
+  推理」——infer 线参与融合的命中附带至多 3 条推理链（路径逐边
+  `from/relation/to/confidence/occurredAt` 可回放 A—使用→B—依赖→C）；渲染追加
+  `（推理: A —使用→ B —依赖→ C (0.42)）`；收集机制为纯出参（chainsOut），评分路径零改动。
+- **G19-G20 真实规模时空门禁**（`eval/cognitive-scale.test.ts`）：3333 条真实文档语料
+  按分阶段时间线（批次写入/取代/热度/删除）重铸为生产格式日志，分时刻快照与手算一致 +
+  热度时间线 + 确定性 + 远未来≡全量（G19）；T 时刻语料+图视图召回全命中 createdAt≤T +
+  why.chains 产出面与契约 + 未来条目词面/图边不穿越 + 逐字节确定性（G20）；
+  `test/memory/replay-asof.test.ts` 16 项 + `infer.test.ts` 新增 5 项行为锁定。
+- tombstone 行携带删除时刻（`{"__tombstone__":"id","at":…}`，读取侧向后兼容旧格式）；
+  `MemoryStore.removeMany` 可选 `now` 参数；`MemoryStore.listAsOf` 可选成员。
+
+### Changed
+
+- **asOf 参数语义深化**（1.1.0 引入时仅回放图谱时间线与评分时钟）：现在同时回放条目层
+  知识状态——这是对该参数文档意图的补全而非破坏（无 asOf 的缺省路径行为与 1.2.0
+  逐字节一致）。
+
+### 工程纪律
+
+- **缺省零回归**：无 asOf / 无 explain 时输出与 1.2.0 逐字节一致（回放与链收集代码
+  缺省不触达；why.chains 为 explain×infer 交集上的可选字段）。
+- **覆盖率阈值修复与再冻结**：0.8.0 冻结的阈值自 1.1.1 防御性加固后未再实测
+  （check 链不含 coverage，仅 CI 覆盖率任务执行），实际已跌至 lines 94.65 /
+  branches 86.98——静默红灯两版。1.3.0 以五个定向补测文件
+  （test/memory/coverage-1.3 与 coverage2-5）修复至实测 lines 98.5 / branches 93.4 /
+  functions 99，并按「阈值与实测同步冻结」协议重设：lines/statements 98（收紧）、
+  functions 98（收紧）、branches 93（校准——余留未达臂为 schema 前置校验后不可经
+  公开面触达的纵深防御分支另一臂、竞态窗口与写入故障注入路径，非可测行为缺口）。
+  单测总数 406→495，全套 559。
+
+## [1.2.0] - 2026-10-30
+
+推理升维版：从「检索记忆」到「基于记忆推理」。设计全文见 `docs/DESIGN-1.2.md`。
+
+### Added
+
+- **模块 E 激活扩散推理线**（`inferEnabled` / `inferMaxHops`，默认关闭）：认知科学 spreading activation
+  的工程化落地——查询实体沿时序图谱**活跃**出边多跳扩散（每跳 ×0.5 衰减、每边 ×关系置信度、
+  最旧边保守时效），每个终结实体保留最优路径链（`InferChain.path` 可回放：A—使用→B—依赖→C）；
+  interpolate 线性叠加（权重 0.25）/ RRF 第五条秩融合（推理专属候选补录，与图谱补录同 id 双线合并）；
+  asOf 时间线硬约束：推理不能穿越失效关系（含 reassertedAt 复活语义）；波束 16 + 链数 16 双护栏，
+  hub 扇出有界；确定性（乱序构建对拍一致）。
+- **模块 F 召回溯源**（`memory_recall explain` 参数）：每条命中附带 `why`——参与融合的召回线
+  （bm25/fuzzy/semantic/graph/infer 固定序）、各线贡献（interpolate=实际加分的加权项系数；
+  rrf=倒数秩贡献，`Σ贡献 × lineBase` 与最终分**逐位精确相等**）、公共权重因子、同源最终分；
+  渲染追加 `（溯源: rrf ← bm25=0.0161 + infer=0.0164）`。纯读侧注记，评分算术路径零改动。
+- **G17-G18 真实规模推理门禁**（`eval/cognitive-scale.test.ts`）：3333 条真实文档语料上的
+  链确定性/有界性/1 跳邻域交叉验证/乱序构建一致性（G17）与溯源契约全命中可解释 + 逐字节
+  确定性（G18）；`test/memory/infer.test.ts` 17 项行为锁定。
+- `memory_recall infer` 参数（逐次开关推理线，与 `graphEnabled` 同形态：参数覆盖配置默认）；
+  `metrics.inferHits` 可观测计数。
+
+### 工程纪律
+
+- **缺省零回归**：`inferEnabled`/`explain` 默认关闭，interpolate+rrf 双模式输出与 1.1.1 逐字节一致
+  （bit-exact 门禁 + 单测双重锁定）；溯源注记不进入任何评分分支的算术路径。
+
+## [1.1.1] - 2026-10-30
+
+全量代码审计驱动的加固版本：修复 2 个 P0、12 个 P1 级缺陷，完成 engine 模块化重构、
+中文分词根治与图谱实体归一层；新增 G13-G16 真实规模认知门禁与 18 项加固回归
+（`test/memory/hardening-1.1.test.ts`）。
+
+### Fixed
+
+- **P0 黄金语料缺失**：`eval/realdata/`（Node.js v26.10.0 官方文档快照）此前从未入库，`check`/`test`/`eval`/CI 在干净克隆上必挂——现随 MANIFEST（SHA-256+字节双校验）一并提交；
+- **P0 图谱种子缺失**：`buildGraph` 在生产代码零调用，重启后第四召回线对存量库完全失效——现启动时全量播种；
+- **P1 多进程数据安全**：`<file>.lock` 单实例写锁（pid 存活探测）+ compact 回放式合并（并发进程追加的外部行在重建后保留）+ fsync 屏障；
+- **P1 热度评分冻结**：IndexCache 纯热度更新后 `byId` 过期复用——现始终按最新 entries 重建；
+- **P1 批内 supersede 覆盖丢失**：ingest 局部可见视图，双取代标记都保留；
+- **P1 memory_store 近重复落穿**：`findDuplicate`（新 API，命中返回条目），>0.92 命中幂等返回；
+- **P1 importSources 未处理拒绝**（可崩宿主）/ **dispose 竞态**（disposed 标志）/ **图边终身死亡**（reassertedAt 复活）/ **graphEnabled 配置不生效**（recallDefaults 注入）；
+- **P1 detectDuplicate O(blocks×N) 哈希热点**：WeakMap 快照指纹缓存。
+
+### Changed
+
+- **矛盾检测独立窗口**：新增 `conflictWindowMs`（默认 30 天）——跨周信念反转可检测；词表真互斥；
+- **巩固召回锚定（真 SRS）**：只巩固被真实召回过的记忆；未使用记忆容许自然衰减；
+- **蒸馏代际治理**：新代写入时旧代补 `superseded-by`，不再无限累积霸占召回；
+- **中文分词根治**：连续 CJK 段切分（伪 bigram 消除）+ 扩展 A/B 区覆盖 + 标点半价 + `safeSlice` 代理对安全截断；
+- **engine 模块化**：拆分 `tokenize/fuzzy/dedup/themes/hash` 五模块，导入路径零变更；
+- **性能**：热度回写 `upsertMany` 批量化、RRF 补录 O(V²)→Set、预算裁剪 continue 填充、聚类/蒸馏 df>64 hub 护栏、容错线统一注入 k1；
+- **图谱实体归一层**：实体规范键（大小写/空白/尾标点变体归一）+ token 对齐层（自然语言问句经共享特异 token 命中）+ `node.js`/`c++` 类专名入图 + 裸「是」降噪；
+- **工具与配置防线**：memory_recall 数值参数钳制、memory_status metrics 分层输出（`verbose`）、normalizeConfig 运行时钳制。
+
+### Added
+
+- **G13-G16 真实规模认知门禁**（`eval/cognitive-scale.test.ts`）：3333 条真实文档语料上的图谱一致性/蒸馏幂等/矛盾精度/规模护栏。
+
+### Removed
+
+- 删除未使用的 `@deepseek-ai/dsh-llm`；peerDependencies 放宽；`@deepseek-ai/schemastery` 显式声明为 peer（不再内联进产物）。
+
+### 工程
+
+- 仓库卫生：17 个历史 tgz/zip 出库；`.gitignore` 补 `*.zip`/`eval/reports/`；CI 与本地 `check` 同链 + concurrency/timeout + Windows 矩阵；eslint Windows `tsconfigRootDir` 修复；engine 六个版本堆叠测试文件按行为合并为单一文件（91→79 用例去重 12 处）；`freshEntry` 四副本收编 `test/memory/utils.ts`；CHANGELOG 按 Keep a Changelog 全文重写；docs 13 篇版本快照归档 `docs/history/`。
 
 ## [1.1.0] - 2026-10-06
 
-### Added（认知升维：记忆层次蒸馏 + 时间感知巩固 + 时序知识图谱 + 信念冲突共存，方案全文见 `docs/DESIGN-1.1.md`）
+### Added
 
-- **模块 A —— 记忆层次蒸馏**（`distillMode` 配置，默认 off 零行为变化）：空闲批处理把重复行为/偏好簇蒸馏为**抽象原则**（`distilled-layer:abstract`）、指令簇蒸馏为**规则约束**（`distilled-layer:procedural`），产物带 `distilled-from:<源id>` 证据链引用；`memory_recall(expand: true)` 命中蒸馏条目时向下展开源记忆（`hits[].expanded`，无效源自动跳过），缺省不展开输出与 1.0.0 逐字节一致；阈值 `distillMinCluster`（最小簇成员数）可调；
-- **模块 B —— 认知巩固与遗忘曲线**（`consolidationMode` 配置 + `recallThreshold`，默认 off 零行为变化）：Ebbinghaus 间隔重复语义的记忆强度模型（`R(t) = strength × e^(−Δt/τ)`，强度越高遗忘越慢），空闲窗口对有到期（due）高价值条目执行巩固复习（协议内更新访问历史，不新增字段、不改内容）；`memory_recall(reinforce: true)` 支持客户端显式巩固；`memory_status` 输出 `dueCount` / `strengthSummary`（consolidationMode=auto 时）；
-- **模块 C —— 时序知识图谱第四召回线**（`graphEnabled` 配置 + `graphMaxEntities`，默认 false 零行为变化）：零依赖规则引擎从记忆内容抽取中英主观三元组（`ruleExtractTriples`），`TemporalGraph` 运行时增量维护邻接表（含 supersede 时序失效边语义，`asOf` 时间点可回放）；召回四线融合新增**图谱线**（邻域扩展 + 度数归一 + hop 衰减），词面全零但图可达的条目可被补录；`memory_status` 输出图谱统计（entities/edges/activeEdges/supersededEdges/evicted）；
-- **模块 D —— 信念修正与矛盾共存**（`conflictMode` 配置，默认 off 零行为变化）：弱化对立信号（不再/禁止/no longer…）且相似相近的疑似反转事实**并存**而非静默删除，`conflicts-with:<旧id>` / `conflict-of:<新id>` 双向标注（tags 协议，MemoryEntry 契约零变更）；召回时冲突双方**都保留**且按时间锚定新者优先（`conflictAwareOrder`），命中条目输出 `conflicts` 显式标注（模块 D3）；与 1.0.0 supersede 强对立词表互斥（"改用 X"只走取代不打矛盾标）；`memory_status` 输出 `conflictPairs` 计数 + 样本；
-- **四线融合与可观测（1.1.0）**：词面 / 容错 / 语义 / **图谱** 四线融合（interpolate 图分叠加 / rrf 补录候选，旧路径逐字节兼容）；metrics 新增 9 个可选计数（`distilled*` / `consolidated` / `consolidationDue` / `graphEdges` / `graphHits` / `conflictPairs`）；`src/memory/cognitive.ts` 聚合 A-D 的空闲维护入口（启动空闲 + 卸载栅栏）；
-- **评估方法论升维（`eval/` + `bench/`，门禁全绿）**：
-  - **G9 蒸馏门禁**（`eval/distill.test.ts`）：可复算、源可追踪率 100%、分层准确（行为/偏好簇→abstract、指令簇→procedural）、冲突簇 0 蒸馏守卫、召回展开=有效源引用数；
-  - **G10 图谱门禁**（`eval/graph.test.ts`）：中英混合三元组抽取召回 ≥ 80%、图召回命中（graphHits > 0）、zero-hop/2-hop 词面全零补录（含 supersede 时间线）、增量 add 与 buildGraph 全量对拍一致、缺省 false 零行为回归；
-  - **G11 巩固门禁**（`eval/consolidation.test.ts`）：100 步模拟时间轴收敛（巩固后 R(t) 不落 < 0.2，对照不巩固则跌落）、间隔拉伸 ≥ 1.5×、off 缺省逐字节一致、存储纯净（零新字段）；
-  - **G12 冲突并存门禁**（`eval/conflict.test.ts`）：对立重建 / 数据更新 / 指令止损 / 真假矛盾夹具，检出精度与互斥性断言；`supersede` 与 `conflict` 打标互斥；
-  - **零行为回归断言**（`eval/bit-exact.test.ts`）：默认配置与 1.0.0 在配置/召回/入库/模块/工具五面**逐字节等价**；
-  - **bench 扩展**：`bench/knowledge-graph.bench.ts`（10K 全量/增量图构建、邻域扩展 P95）、`bench/distill.bench.ts`（1K/10K 蒸馏批处理、expandDistilled 展开），`npm run bench` 可复算。
-
-### Changed（维护与一致性）
-
-- 既有 327 项测试保持通过并扩展至 **439 项**（新增 112）：tools-1.1（7 项工具新参数断言：expand 展开与无效源跳过、conflicts 输出与 conflictAwareOrder、graphEnabled 图线启用/未注入不生效、reinforce=false/asOf 只读热度语义）+ 四个 1.1.0 模块单元测试 + eval G9-G12 门禁与 bit-exact 回归（合计 56 项 eval 断言全绿）；check 链（verify:realdata + typecheck + lint + format:check + test）全绿；
-- lint/格式净化：移除 `src/index.ts` 三处窄化后多余的类型断言与测试侧一处断言，eslint 9 + prettier 零告警；
-- `.tgz` 插件包/`npm pack` 产物随版本号同步为 `dsh-memory-hub-1.1.0.tgz`；README / ARCHITECTURE / CHANGELOG 版本声明一致。
-
-### 兼容性
-
-- **MemoryEntry 持久化契约零变更**（id/kind/content/tags/source/sessionId?/workspace?/createdAt/updatedAt/accessCount/lastAccessAt? 字段不变），一切新机制走 tags 协议 + 独立运行时索引；
-- 四工具签名与输出 schema **不破坏性变更**：仅新增**可选**参数（recall `expand`/`graphEnabled`/`reinforce`/`asOf`、status 可观测字段、store/forget graph/conflict 注入）与可选输出字段（`hits[].expanded`/`hits[].conflicts`、status `distilled`/`graph`/`dueCount`/`strengthSummary`/`conflictPairs`），旧调用逐字节兼容（bit-exact 断言锁定）；
-- 1.1.0 新能力**默认关闭**（distillMode=off / consolidationMode=off / graphEnabled=false / conflictMode=off），未配置时行为与 1.0.0 完全一致；零新增运行时第三方依赖（纯函数 + node 内置）。
+- **模块 A 记忆层次蒸馏**（`distillMode`）：重复行为/偏好簇蒸馏为抽象原则、指令簇为规则约束，`memory_recall(expand)` 展开源记忆证据链；
+- **模块 B 认知巩固**（`consolidationMode` + `recallThreshold`）：Ebbinghaus 遗忘曲线 + 间隔巩固调度；
+- **模块 C 时序知识图谱第四召回线**（`graphEnabled` + `graphMaxEntities`）：零依赖三元组抽取 + `asOf` 时间线回放；
+- **模块 D 信念修正与矛盾共存**（`conflictMode`）：疑似反转事实双向标注并存，新者优先；
+- 评估套件扩展：G9-G12 认知门禁 + `eval/bit-exact.test.ts` 逐字节零回归断言 + 图谱/蒸馏 bench。
 
 ## [1.0.0] - 2026-10-06
 
-### Added（世纪升维：记忆生命周期与冲突感知 + 双引擎混合检索 + 指纹去重根治 + 可观测性，方案全文见 `docs/DESIGN-1.0.md`）
+### Added
 
-- **模块 A1 —— supersede 取代协议**（`supersedeMode` 配置，默认 off 零行为变化）：自动识别"取代旧约定"的对立信号（语义单一事实源词表，importer/capture 派生不可漂移），被取代记忆（tags 含 `superseded-by:`）召回时按系数衰减（`supersededPenalty` 可调，1.0 = 关闭降权）；同现去重剔除被取代条目，`recall`/`status` 状态可见；
-- **模块 A2 —— 主题自动聚类运行时视图**（`themes` 配置）：`status` 输出聚合主题视图（memory_count/token/updated 统计），无持久化、零模式变更；
-- **模块 A3 —— 价值感知自动淘汰**（`maxEntries` + `autoEvict`）：超出上限时按价值分淘汰最有价值记忆（冷热分 + 显著性强弱），instruction 类记忆永不自动淘汰；
-- **模块 B —— 双引擎混合检索**（`semanticBoost`/`fusionMode` 配置，默认关闭零行为变化）：词面线（BM25）/ 容错线（fuzzy）/ 语义线（MinHash 覆盖率）三线评分 + `interpolate`（线性插值）或 `rrf`（Reciprocal Rank Fusion，k=60）融合；
-- **模块 C —— UF-1.0 统一内容指纹**：写入路径统一指纹协议 + 导入前库内跨 id 前缀去重（疑点 7 闭环），捕获/记忆库/导入三路同源；
-- **模块 D —— 可观测性升维**：`status` 输出覆盖率/安全垫量化、召回链路 stage 流水、配置快照，四工具输出重构；
-- **模块 E —— 评估方法论升维**（`eval/`，门禁全绿）：
-  - **G5 参数网格 4 维 81 组**：默认参数组每维不劣于任何组合 + b 三档（0.5/0.75/0.9）spread ≥ 0.02，杜绝"网格塌缩"；
-  - **G6 真实数据接地扩至四份语料 / 49 问句**：Node.js v26.10.0 官方 tag path / os / fs / stream 快照（SHA-256 固化 `MANIFEST.md`），每问句语义锚 ≥ 2 + 盲验守卫（top5 至少一条锚命中），门限 recall@1 ≥ 0.75 / @3 ≥ 0.85 / @5 ≥ 0.95；
-  - **G7 鲁棒性好文辞**：大小写 / 全角 / 空白 / 标点 / 错字五类扰动聚合退化 ≤ 5%；
-  - **G8 生命周期与聚类**：supersede 判定准确率 ≥ 0.9、被取代降权衰减、同现去重、主题聚类纯度 ≥ 0.85。
-
-### Changed（维护与一致性）
-
-- 既有 325 项测试保持通过并扩展至 **327 项**（新增 G7 鲁棒性 + G8 生命周期聚类两组门禁，eval 九个场景断言全绿）；check 链（verify:realdata + typecheck + lint + format:check + test）全绿，tsup / bench / npm pack 验证通过；
-- 检索质量评估报告升级为 v1.0.0（`npm run eval` 一键复算，G1–G8 全场景指标落盘）；
-- `.tgz` 插件包/`npm pack` 产物随版本号同步为 `dsh-memory-hub-1.0.0.tgz`；README / ARCHITECTURE / CHANGELOG 版本声明一致。
+- **supersede 取代协议**（`supersedeMode`）：对立信号识别，被取代记忆召回降权 + 同现去重；
+- **主题聚类视图**（`themes`）与**价值感知自动淘汰**（`maxEntries` + `autoEvict`，instruction 永不淘汰）；
+- **双引擎混合检索**（`semanticBoost`/`fusionMode`）：词面 BM25 / 容错 / 语义三线，interpolate 或 RRF(k=60) 融合；
+- **UF-1.0 统一内容指纹**：捕获/显式/导入三路同源去重；
+- 评估方法论：G5 四维 81 组参数网格、G6 真实数据门扩至四语料 49 问句、G7 扰动鲁棒性、G8 生命周期与聚类。
 
 ## [0.10.0] - 2026-10-05
 
-### Added（真实数据接地，G6 真实数据门）
+### Added
 
-- **G6 真实数据门（real-data grounding gate）**（`eval/realdata.ts` + `eval/realdata/`）：把离线质量评估从"固定 seed 合成黄金语料自证"升级为"**真实数据验证 + 合成语料回归**"双轨——
-  - **真实可信语料**：Node.js 官方 API 文档（path / os，**固定 tag v26.10.0** 快照，SHA-256 固化在 `eval/realdata/MANIFEST.md`），随仓库分发、评测不联网、跨机器逐字节可复现；
-  - **生产同路径入库**：真实文档文本走 `planImport`（`splitDocument` 切块 → kind 推断 → 敏感过滤 → 长短校验 → 内容哈希幂等 id）→ `MemoryEntry[]`，与插件启动时 `importSources` 的真实数据接入路径**完全一致**，验证的不是"评估自证"而是"插件对接真实数据"本身；
-  - **真实问句 + 语义锚标注**：24 个真实 API 使用问句（英文），以 API 专名/关键短语为**语义空间锚**标注相关记忆（涵盖标题块/描述块/示例块，避免切块错位低估真实召回）；锚点完整性守卫（任一查询锚命中为空即门禁红，语料漂移可检测）；
-  - **保守可复算门限**：实测基线 recall@1=0.792 / recall@3=0.875 / recall@5=0.958 / MRR=0.854，门限冻结为 **recall@1 ≥ 0.75 / recall@3 ≥ 0.85 / recall@5 ≥ 0.95**——真实文档含代码块/多段落，不可能像合成语料那样 100% 第一答命中，但 top-3/top-5 必须高置信；
-  - **报告并入**：`npm run eval` 生成的质量报告新增 G6 场景段落（条目数/查询数/全指标），G1–G5 合成语料门限**全部保持**（兼容性零回归）。
-
-### Changed（改进）
-
-- 既有 324 项测试全部保持通过并扩展至 **325 项**（新增 G6 真实数据门断言 + G6 报告场景）；覆盖率 **lines 100 / branches 97.89 / functions 100 / statements 100**（branches 97.87 → 97.89 微升）；
-- `.prettierignore` 新增 `eval/realdata/` 与 `eval/reports/`：固化语料逐字节不可变（MANIFEST 哈希一致性），生成物不参与格式门；
-- `npm run eval` 六门限 → **七门限**（G1–G6），`npm test` / CI `quality-eval` job 自动涵盖真实数据门；
-- 文档同步：README / docs/ARCHITECTURE 更新至 0.10.0，真实数据接地全过程与实测对比见 `docs/GROUND-0.10.md`。
-
-### 兼容性
-
-- 四工具签名（memory_store / memory_recall / memory_forget / memory_status）、`MemoryEntry` 数据契约、`cordis.patch.yml` 安装方式**完全不变**；
-- **纯函数零外部依赖**立场不变（G6 语料随包分发，不新增任何 npm 依赖、评测不联网）；既有 324 项测试逐项复证（325 项全绿）；
-- 合成语料评估（G1–G5）门限与报告格式不变，仅追加 G6 段落；不配置 `importSources` 的运行时行为与 0.9.0 完全一致。
+- **G6 真实数据门**：Node.js v26.10.0 官方文档快照（SHA-256 固化）经生产同路径 `planImport` 导入，真实问句 + 语义锚标注，门限 recall@1 ≥ 0.75 / @3 ≥ 0.85 / @5 ≥ 0.95。
 
 ## [0.9.0] - 2026-10-05
 
-### Added（16 项薄弱项深度闭环）
+### Changed
 
-- **漂移免疫词法（B/M）**：`STRONG_TERMS` / `BALANCED_STRONG_TERMS` / `BASIC_TERMS` 单一事实源，`STRONG_HINTS` / `BALANCED_STRONG_HINTS` / `PREFERENCE_HINTS` 全部由词表编译派生——裸「务必/一定」conservative 漏记修复（探针 B2 `[]` → 捕获，kind=preference），跨表漂移从运行期 bug 变为编译期不可能；`ImportOptions.mode` 落地为 `inferKindWithMode` 三档推断强度（conservative 仅强信号 / balanced 默认现状 / aggressive），文档分支真实消费。
-- **共享默认隔离（J）**：未标注 workspace = 全局共享——`memory_status` 过滤改为 `e.workspace === undefined || e.workspace === args.workspace` 与引擎对齐；tools/result 捕获按 `exec.agent.session.header.cwd` 溯源真实 workspace（不再永远为全局），session/event 捕获继续沿用 `session.header.cwd`。
-- **双尺度时间语义（Q）**：`RecallOptions` 新增 `decay`（默认 true）与 `decayHalfLifeMs`（默认 7d 显式化）可注入；插件默认 `recallDecayHalfLifeDays=0` **关闭评分衰减**——`ttlDays=0`「永不过期」升级为「可检索」，60 天记忆不再被写死半衰期压到 1/4000 而不可召回。
-- **写入路径工程化（C/D/N）**：ingest 批内瞬时去重（同批同文只入库 1 条，`rejectedDuplicate++`）；dispose 捕获栅栏（先 `await captureChain` 排空在途捕获再 `close()`，卸载丢写竞态消除）；recall 热度合并回写（同 id 窗口内只写一次，抗刷）+ flush 失败计入 `metrics.errors` + logger（不再被 allSettled 吞）。
-- **签名候选预筛（K）**：MinHash 从预留落地为真实候选剪枝——大查询（特征集 > `MINHASH_K`）先 O(K) 签名预筛（保守阈值 = 覆盖率×2/3），只剪不相干文档、评分语义不变；小查询路径零变化。
-- **契约显式化（E/G/H/A'/O/S/F/L）**：`.corrupt` 幂等留证（重启不重复追加）；`extractSessionText.isUser` 正式消费（`inferSpeakerKind`：助手复述偏好降 generic、指令保持 instruction）；`memory_forget` 新增可选 `strict`（未命中抛 NOT_FOUND，错误码首次真实使用）；recall `kind` 参数 schema enum 收紧（非法 kind 统一 `ToolArgsError`，与 store 同形态）；`snapshots()` 零拷贝共享 + 写时重建（读路径 O(1)）；`significanceWeight` 的 `?? 1` 兜底移除（Record 全键在编译期拦截）；`extractTextBlocks` 词边界感知分隔（英文跨块补空格，中文/标点逐字节不变）；`autoTags` 从死配置变为真实开关（false 清空自动标签）。
-
-### Testing（测试纵深）
-
-- 既有 294 项测试全部保持通过并扩展至 **324 项**（新增 30）：`upgrade-0.9.test.ts`（14 项探针转正：B/C/E/F/G/H/J/K/L/M/N/O/Q + mode 三档 + strict 遗忘）、store-fault 扩充 +6（corrupt 幂等 / 容错 Error 与 String 双分支 / closed 后三操作抛错）、index-lifecycle +3（捕获栅栏时序 / decay 挂载分支）与其他细化；
-- 覆盖率 **lines 100 / branches 97.87 / functions 100 / statements 100**（branches 96.1 → 97.87，store.ts 93.13 → 100 —— 15 个 src 文件 lines 全 100）；阈值保持 lines ≥96.5 / branches ≥95 / functions ≥97 / statements ≥96.5 不变；
-- `tsc（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）/ eslint 9 / prettier / eval（G1–G5 六门限全绿，recall@1=1.0）/ bench（BM25 top@1 命中率 100%，80/80）` 全过。
-
-### 兼容性
-
-- 四工具签名（memory_store / memory_recall / memory_forget / memory_status）、`MemoryEntry` 数据契约、`cordis.patch.yml` 安装方式**完全不变**；
-- **纯函数零外部依赖**立场不变（不新增任何 npm 依赖）；既有 294 项测试逐项复证（324 项全绿）；
-- 渲染文本与错误码**逐字节不变**（render 函数与既有错误码常量零改动；NOT_FOUND 仅显式 `strict:true` 才抛出）；新增配置键（`recallDecayHalfLifeDays`）默认 0 与工具可选参（strict）默认关闭，未配置时行为与 0.8.0 完全一致。
+- 16 项薄弱项深度闭环：词法单一事实源（编译期防漂移）、共享默认隔离（无 workspace = 全局）、工具结果按会话 cwd 溯源、热度合并回写（抗刷）、评分时间衰减双尺度（`recallDecayHalfLifeDays=0` 长期记忆真正可召回）、16 项探针转正。
 
 ## [0.8.0] - 2026-10-05
 
-### Changed（全模块薄弱项升维）
+### Changed
 
-- **插件生命周期与错误路径全量可测**（L1–L4，`src/index.ts` 分支 70.21 → 85.07）：以真实 `Context` + 可注入故障的 MockStore 驱动插件级测试——正常卸载/close 失败卸载、工具注册失败不阻断其余、store open 失败仅告警、pruneOnce 三路径（ttlDays≤0 早退 / removeMany 批量 / 逐个 remove 回退 / prune 失败）、捕获队列背压 256 边界（260 事件冲刷恰好 256 入库、越限即丢）、捕获任务失败链不中断、ttlDays>0 定时器注册与卸载清理；
-  - **测试环境适配**：vitest ESM 转换下 `ctx.plugin(import * as plugin)` 不采用 apply 返回的 disposer（Node 原生 ESM 直跑对照组验证为环境特性），`mountPlugin()` 包装器显式组装 `{ name, apply, inject }` 对象后挂载，disposer 链（监听/工具注销、store close）恢复真实驱动，并消除了测试侧 `as never` 强转。
-- **工具输出契约从黑盒变白盒**（L5–L8，工具函数覆盖 71.42 → 100）：四个工具的 `render` 全分支直调单测（dsh-tools 允许 `render(args, value)` 直调）——status 空库/全形态/diagnostics 缺省、recall 零命中/多命中/token 预算、forget removed/not found、store workspace 注入与 tags 清洗截断边界。
-- **engine 防御分支闭环 + 死代码移除**（L9）：18 处守卫分支专项测试（`engine-guard-0.8.test.ts`：minhash 签名/覆盖率守卫、df 缺失 IDF 平滑兜底、空查询、windowMs≤0、ttlDays≤0、未知 kind 兜底）；经**不变式证明**移除三处不可达分支（`minhashCoverage` 的 `inter≤0`、`similarity` 的 `maxLen===0`、`levenshtein` 的 `!a.length`/`!b.length` 空串分支）并留证注释，engine.ts branches 100%。
-- **store 容错告警路径故障注入**（L10）：`vi.mock('node:fs/promises')` 包装真实实现后注入 compact 写失败 / 自检行数 mismatch / 自检读失败 / 隐私文件 chmod 失败四类故障，断言告警且条目不受损。
-- **capture 强度词语义去重**（L11）：conservative/balanced 两处内联强度词正则抽为共享 `STRONG_HINTS` / `BALANCED_STRONG_HINTS` 常量（语义各自保留、grep 无重复列表），强弱信号分支补齐直测。
-- **剩余分支与类型断言清零**（L12–L15）：importer 非对象 JSON 行、`toMemoryEntry` 可选字段拷贝分支补齐；`memory-status.ts` 双断言 `as unknown as { diagnostics? }` 提纯为 `DiagnosticsProvider` 接口 + `'diagnostics' in store` 类型守卫；`memory-recall.ts` 抽 `RecallOutput` 接口复用 execute 返回与 schema 形状；`src/index.ts` 工具注册类型精确为 `Array<() => () => void>` 消除 disposer 断言——**src 断言计数不增，质变点全部落测试**。
-- **覆盖率阈值与 0.8.0 实测同步冻结**：`vitest.config.ts` 阈值提升至 **lines ≥96.5 / branches ≥95 / functions ≥97 / statements ≥96.5**（杜绝"门槛与实测脱节"重演）。
-
-### Testing（测试纵深）
-
-- 既有 236 项测试全部保持通过并扩展至 **294 项**（新增 58）：engine-guard-0.8（18 项守卫/兜底）、store-fault-0.8（5 项容错故障注入）、edge-0.8（12 项 capture 强弱信号/importer 回落/toMemoryEntry 拷贝）、tools-render-0.8（12 项四工具 render 全分支 + workspace/tags/截断/错误码守卫）、index-lifecycle-0.8（11 项生命周期/错误路径/背压/定时器）；
-- 覆盖率 **lines 100 / branches 96.1 / functions 100 / statements 100**（新阈值 96.5 / 95 / 97 / 96.5 达标），较 0.7.0 全维度上升；`engine.ts`、`importer.ts`、`text.ts`、`metrics.ts`、`ingest.ts`、`types.ts`、`memory-store.ts` 均 **100%**；
-- `tsc（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）/ eslint 9 / prettier / tsup / bench（BM25 top@1 命中率 100%）/ eval（G1–G5 六门限全绿，recall@1=1.0）` 全过。
-
-### 兼容性
-
-- 四工具签名（memory_store / memory_recall / memory_forget / memory_status）、`MemoryEntry` 数据契约、`cordis.patch.yml` 安装方式**完全不变**；
-- **纯函数零外部依赖**立场不变（不新增任何 npm 依赖）；既有 236 项测试逐项复证（294 项全绿）；
-- 源码升维全部为**行为等价重构**（常量提取/类型提纯/接口抽取/死代码移除），工具输出文本与错误码语义逐字节不变（render 直测复证）。
+- 全模块质量升维：插件生命周期与错误路径全量可测（L1-L4）、工具输出契约白盒化（render 全分支直测）、engine 守卫分支闭环 + 死代码不变式移除（L9）、store 故障注入（L10）、覆盖率阈值与实测同步冻结（lines ≥96.5 / branches ≥95）。
 
 ## [0.7.0] - 2026-10-05
 
-### Changed（世界性代码质量升级）
+### Changed
 
-- **守门强度与实测对齐**（U1）：`vitest.config.ts` 覆盖率阈值从 0.4.0 时代的 `93.04/85/88.91/90` 提升至 **lines 94.71 / branches 89.71 / functions 95.14 / statements 94.71**（对齐用户硬约束并留实测安全垫），杜绝"功能函数可删 10 个百分点而不被 CI 拦截"的守门虚设；README / ARCHITECTURE / QUALITY-0.7 全文档数值一致，消除文档-配置双重漂移。
-- **重复实现合并去重**（U2）：`src/index.ts` 私有 `blocksToText` 与 `src/memory/importer.ts` 的 `extractTextBlocks` 是同一逻辑两份实现，现归一到**唯一实现** `src/memory/text.ts`（导出 `extractTextBlocks`），index.ts / importer.ts 复用，`importer.ts` re-export 保持既有导入路径兼容；新增 text 专项测试 + re-export 等价性测试 11 项，text.ts 覆盖率 100%。
-- **错误基础设施沉淀**（U3）：`errorMessage` 从 index.ts 私有函数提升为 `src/errors.ts` 全局导出唯一入口（MemoryHubError → `CODE: message` 保留稳定错误码、Error → message、其余 → String 兜底），index.ts 9 处告警日志统一复用；`toMemoryHubError` 补齐专项测试，**errors.ts 覆盖率 100%**（此前 71.42%）。
-- **评估管线版本自动读取**（U4）：`eval/eval.test.ts` 从 `package.json` 读取 `version` 注入报告，消除 0.6.0 已漏改的硬编码漂移（报告标题将自动跟随版本）。
-- **CI 纳入评估门限**（U5）：`.github/workflows/ci.yml` 新增独立 `quality-eval` job 执行 `npm run eval`（离线质量门限，可复算、确定性），评估不再游离于任何 CI 路径之外；bench 按既有设计注释保持不进 CI。
-- **bench 质量对比可观察**（U6）：`bench/recall.bench.ts` 无操作占位 `recordRatio` 替换为真实输出——BM25 与 cosine 基线 top@1 命中率以 `[bench]` 前缀直接落 stdout（vitest bench 模式下 afterAll 不执行，故改为任务内输出 + 去重），消除不可观察死代码。
-- **类型断言提纯**（U7）：`engine.ts` 的 `minhashSignature` 改 `MINHASH_SEEDS.entries()` 迭代、`fuzzyVariants` 改 `charAt` 消除下标断言，src 非空断言从 **69 处降至 4 处**（降幅 94%，超额完成 ≥40% 目标），剩余 4 处均为 `levenshtein` 滚动数组且带算法不变式证明注释；typecheck 零错误。
-- **ingest 拆分与直接单测**（U8）：捕获入库管线（敏感过滤 / 窗口去重 / 超长截断 / 防污染 id / workspace 注入 / 指标计数）自 `src/index.ts` 拆出为 `src/memory/ingest.ts`（导出 `ingestCaptured` + `IngestOptions`，行为严格等价），index.ts 聚焦"接线"；新增 ingest 专项测试 7 项覆盖全部分支，**ingest.ts 覆盖率 100%**。
-
-### Testing（测试纵深）
-
-- 既有 207 项测试全部保持通过并扩展至 **236 项**：errors-0.7（11 项错误码契约 / MemoryHubError / toMemoryHubError / errorMessage 全覆盖）、text-0.7（11 项提取边界 + importer re-export 等价性）、ingest-0.7（7 项入库管线全分支）；
-- 覆盖率 **lines 95.59 / branches 91.19 / functions 96.07 / statements 95.59**（新阈值 94.71 / 89.71 / 95.14 / 94.71 达标），较 0.6.0 全面上升；新增模块 errors.ts / text.ts / ingest.ts 覆盖率均 **100%**；
-- `tsc（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）/ eslint 9 / prettier / tsup / bench / eval` 全过。
-
-### 兼容性
-
-- `MemoryEntry` 数据契约、4 个工具名与参数、安装方式（tgz + `dsh plugin add` / 桌面插件页）完全不变；
-- `cordis.patch.yml` 安装方式不变；不新增任何 npm 依赖（纯函数零外部依赖立场不变）；
-- U2 的 `extractTextBlocks` 同时保留 `src/memory/importer.ts` re-export 与 `src/memory/text.ts` 直导，既有导入路径全部兼容；U8 的 `ingestCaptured` 与原私有 ingest 行为严格等价（既有 236 项测试逐项复证）。
+- 代码质量升级：覆盖率阈值对齐硬约束、重复实现合并（`text.ts` 单一实现）、`errorMessage` 沉淀 `errors.ts`、评估管线版本自动读取。
 
 ## [0.6.0] - 2026-10-05
 
-### Added（真实数据接入，接地）
+### Added
 
-- **真实数据接入层**（`src/memory/importer.ts`，方案见 `docs/REALDATA-0.6.md`）：让插件**开箱即有记忆**——把用户已经沉淀的真实数据资产批量接入记忆库，三条路径全部为纯函数、零外部依赖：
-  - **Markdown 记忆文档导入**（AGENTS.md / MEMORY.md / USER.md / 任意 `.md`/`.txt`）：`splitDocument()` 稳定切块（标题/列表/连续段落聚合，纯链接索引行跳过），推断 `instruction`/`preference`/`generic` kind，`source: 'explicit'`；
-  - **Harness 会话事件日志导入**（JSONL）：`extractSessionText()` 宽容解析 `user/message`（取 `data.content`）与 `assistant/message`（取 `data.message.content`，缺省回退 `data.content`），损坏行只计数不阻断，`source: 'auto'`；
-  - **内容级幂等**：id = `imp-${contentHash(content)}`，同一内容跨文件/跨时间重复导入自动合并（`importAll` 天然去重），重复导入第二次新增数为 0；
-- **插件启动导入接线**（`src/index.ts` + `src/config.ts`）：新增**可选**配置键 `importSources`（`documents?` / `sessionLogs?`），store 就绪后逐个读文件 → `planImport` → `importAll`；路径不存在/解析失败**仅告警计数，绝不阻断插件启动**；**未配置时行为与 0.5.0 完全一致**（默认空数组）；`memory_recall` 可直接召回导入的真实记忆（复用 0.5.0 全部 BM25/容错/语义/热度/价值评分）；
-- **真实语料端到端验收**：测试读取仓库**真实** `README.md` + `CHANGELOG.md` 走「导入 → importAll → buildIndex → queryIndex」全链路（assert 真实词 `BM25`/`dsh-memory-hub`/`memory_recall` 可召回），不再是合成黄金语料自证。
-
-### Changed（改进）
-
-- 既有 186 项测试全部保持通过并扩展至 **207 项**：importer-0.6（19 项切块/会话提取/kind 推断/幂等/敏感过滤/真实语料端到端）、load 新增 2 项启动导入冒烟（导入成功 + 路径不存在仅告警）；
-- 覆盖率 **lines 94.71 / branches 89.71 / functions 95.14**（门槛 lines 93.74 / branches 88.97 / functions 85 达标，`vitest.config.ts` 固化），`importer.ts` 自身 lines 100% / branches 98.59%；
-- Hook 接线零侵入：仅在 `index.ts` 增加一个 `importSources()` 内部函数（可选配置读取后即返回），既有事件捕获、工具注册、TTL 清理、disposer 链路未改一行；
-- 文档同步：`README` / `docs/ARCHITECTURE` 更新至 0.6.0，方案全文见 `docs/REALDATA-0.6.md`。
-
-### 兼容性
-
-- `MemoryEntry` 数据契约、4 个工具名与参数、安装方式（tgz + `dsh plugin add` / 桌面插件页）完全不变；
-- `importSources` 为 schemastery **可选**配置键（`Schema.object(...)`，默认 `{ documents: [], sessionLogs: [] }`）：不配置即零导入、与 0.5.0 逐项行为一致（既有 186 项测试逐项复证）；不新增任何 npm 依赖；
-- 导入产出的 `MemoryEntry` 与实时捕获共享受检：敏感过滤（NFKC 归一化）、短块（<8 字符）丢弃、`maxChars` 截断——离线批量导入不绕过任何隐私与质量防线。
+- **真实数据接入层**（`importSources`）：Markdown 记忆文档与会话 JSONL 日志启动导入，内容级幂等（`imp-<contentHash>`），开箱即有记忆；未配置时行为与 0.5.0 完全一致。
 
 ## [0.5.0] - 2026-10-05
 
-### Added（深度创新升级）
+### Added
 
-- **A1 模糊查询扩展（fuzzy query expansion）**（`engine.ts`）：查询中的英文纯字母词（长度 ≥4）生成编辑距离 ≤1 变体（删除/交换/替换/插入）并入候选词典；仅当精确 BM25 零命中时以 0.5 折扣兜底，绝不干扰精确命中排序——"拼错了也能找到那条记忆"（A1 代号，方案见 `docs/INNOVATION-0.5.md`）。
-- **A2 MinHash 近似语义召回（semantic recall）**（`engine.ts`）：英文/数字 token 展开为字符 3-gram（首尾边界标记）作为语义特征空间，随 `buildIndex` 缓存 k=16 FNV-1a MinHash 签名（未来 LSH 剪枝资产）；评分采用**精确查询覆盖率**（|Q∩D|/|Q|，零估计误差，规避小特征集 MinHash 方差），覆盖率 ≥0.45 才进入 0.3 权重兜底——"没记住原话，换个说法也能回忆起"。
-- **A3 记忆价值感知评分（significance-aware）**（`engine.ts`）：显著性权重 = 类型系数（指令 1.25 > 决策 1.15 > 偏好 1.05 > 事实 1.0 > 泛化 0.95）× 来源系数（显式记忆 1.1 > 自动 1.0），乘入运行时评分——"用户明说的指令/决策"天然高于流水账事实；`significance: false` 可关闭（可复算/调参）。
-- **A4 记忆生命周期自适应热度（heat lifecycle）**（`engine.ts`）：`heat = 1 + 0.1·log1p(accessCount)·temporalDecay`，`temporalDecay = exp(−Δ/半衰期)`（默认 7 天，`heatHalfLifeMs` 可注入）——久未访问的高频旧记忆按 Ebbinghaus 遗忘曲线冷却、近期验证过的记忆保持热度，修复"3 个月前高频琐事长期霸榜"；`accessCount=0`/`lastAccessAt` 缺失的历史数据语义与 0.4.0 完全一致。
-- **A5 离线质量评估套件（eval harness）**（`eval/`）：固定 seed 黄金语料四场景（G1 精确质量 80 组 / G2 模糊召回 30 组错拼 / G3 语义召回 9 组词根变体 / G4 热度冷却）+ recall@1/3/5、MRR、NDCG@k 指标 + k1×b×heatHalfLifeMs 27 组合参数网格敏感性；`npm run eval` 一键可复算，报告落盘 `eval/reports/quality-report.md`。
-
-### Changed（改进）
-
-- 既有 141 项测试全部保持通过并扩展至 **186 项**：engine-0.5（25 项模糊/语义/签名）、heat-0.5（9 项热度生命周期）、significance-0.5（5 项价值感知）、eval 门限（6 项含参数网格 oracle）；G1/G2/G3/G4 实测 recall@1 = 1.0；
-- 覆盖率 **lines 93.74 / branches 88.97**（门槛 lines 93.04 / branches 88.91 达标），阈值已固化进 `vitest.config.ts`；
-- `npm run eval` 评估入口、`tsconfig`/vitest include 纳入 `eval/`（tsc/eslint/prettier 全绿）；参数网格实测 b=0.5 全组合 recall@1 塌缩为 0，反证默认 b=0.75 的唯一最优性；
-- 文档同步：`README` / `docs/ARCHITECTURE` 更新至 0.5.0，方案全文见 `docs/INNOVATION-0.5.md`。
-
-### 兼容性
-
-- `MemoryEntry` 数据契约、4 个工具名与参数、安装方式（tgz + `dsh plugin add` / 桌面插件页）完全不变；
-- A1-A4 全部落在引擎内部评分路径（`fuzzy`/`semantic`/`heatHalfLifeMs`/`k1`/`b`/`significance` 均为 `RecallOptions` 可选注入），工具输出 schema 不变；词面精确命中场景的排序语义与 0.4.0 兼容（既有 141 项测试逐项复证）；
-- **实现修正**：INNOVATION-0.5 §3.3 原设计的 density 维度（内容 <20 字符 ×0.9）在实现阶段发现与既有质量断言「精炼短记忆优先于长尾文档」（0.4.0 长度归一化）直接冲突——短小精悍的指令记忆恰是最高价值记忆，按硬约束（既有测试全绿）移除 density，A3 仅保留 kind × source 两维；保证短记忆价值不被惩罚。
+- **A1 容错检索**：编辑距离 ≤1 变体兜底（0.5 折扣，不干扰精确命中）；
+- **A2 近似语义召回**：字符 3-gram 特征空间 + MinHash 签名 + 精确覆盖率评分（≥0.45 兜底）；
+- **A3 价值感知评分**（kind × source 显著性权重）与 **A4 热度生命周期**（访问热度半衰期冷却）；
+- **A5 离线评估套件**（`eval/`）：G1-G4 黄金曲库 + recall@k/MRR/NDCG + 参数网格。
 
 ## [0.4.0] - 2026-10-05
 
-### Added（世纪级升级）
+### Added
 
-- **Okapi BM25 排序检索**（`engine.ts`）：替换 TF·IDF cosine 为 BM25（k1=1.2, b=0.75）——词频饱和 + 文档长度归一化，长尾/泛化文档不再天然压过精炼短记忆；IDF 平滑（df=0 不除零）；空查询短路保持 0.3 语义。
-- **查询规范化与停止词**：查询与索引 token 统一 NFKC 折叠（全角/异体英文与半角等价）；英文停止词过滤（`the/a/is/of` 等不占索引槽）；纯停止词查询返回空数组，不误召回全库。
-- **`IndexCache` 内容指纹失效**：sha256 指纹（id+content+tags）叠加 revision 双重判定——revision 变但内容未变（纯热度更新）复用旧索引，内容变化才重建，缓存命中语义精确。
-- **存储自愈：损坏行隔离留证**（`store.ts`）：跳过损坏 JSONL 行时自动备份原文至 `<file>.corrupt`（0600、追加写、失败仅告警），损坏数据可追溯、主文件不受污染、corrupt 计数语义不变。
-- **compact 自检**：原子重建（tmp + rename）后重读新文件核对行数与内存条目数，不一致仅告警（延续"compact 是优化路径、绝不吞写"容错哲学）。
-- **`exportAll()` 完整迁移闭环**：`MemoryStore` 新增可选成员，与既有 `importAll` 对称——`JSON.parse(exportAll())` 可直接喂给新实例 importAll，跨设备迁移数据往返无损（含空库与 closed 抛错边界）。
-
-### Changed（改进）
-
-- 既有 113 项测试全部保持通过并扩展至 **141 项**：BM25 质量回归（长度归一化/词频饱和单调/评分可复算/稀有词 IDF）、NFKC 查询规范化、停止词边界（过滤与纯停止词空结果）、指纹缓存复用（热度更新不重建）与重建、长文本 Jaccard 退化路径、损坏隔离留证（隔离文件到位 + 计数不变）、compact 自检、exportAll→importAll 往返、size 诊断等 28 项新增；
-- 覆盖率 **lines 93.04 / branches 88.91**（门槛 91.68 / 87.91，达标）；`tsc / eslint / prettier / tsup / bench` 全过；
-- `npm run bench` 新增"IndexCache 热度更新复用"与"BM25 vs cosine top@1 质量对比"基准（质量对比可复算：cosine 0% → BM25 100%）；
-- 文档同步：`README` / `docs/ARCHITECTURE` / `docs/CENTURY-0.4.md` 全量更新至 0.4.0。
-
-### 兼容性
-
-- `MemoryEntry` 数据契约、4 个工具名与参数、安装方式（tgz + `dsh plugin add` / 桌面插件页）完全不变；
-- `MemoryStore` 接口新增 `exportAll?` 可选成员（`removeMany?` / `revision?` / `diagnostics?` 保持既有可选语义），自定义实现仍向后兼容。
+- **Okapi BM25 排序**（k1=1.2/b=0.75，长度归一化 + 词频饱和）；NFKC 查询规范化与英文停止词；
+- 损坏行隔离留证（`.corrupt` 审计文件）、compact 自检、`exportAll` 迁移闭环。
 
 ## [0.3.0] - 2026-10-05
 
-### Added（新功能）
+### Added
 
-- **运行指标体系（`HubMetrics`）**：捕获入库 / 显式存储 / 召回次数与命中 / 遗忘 / 敏感拒绝 / 去重拒绝 / TTL 清理 / 背压丢弃 / 错误计数，全量 10 项指标；`memory_status` 输出 `metrics` 快照，卸载时输出结构化汇总日志。
-- **有界捕获队列（背压）**：捕获队列上限 256，事件洪水时丢弃最早期任务并计数 `dropped`，保护进程内存有界。
-- **`removeMany(ids)` 批量删除**：单次落盘多行 tombstone + 单次 compact 判定，TTL 清理一次 prune 一次落盘批次。
-- **`memory_recall.kind` 过滤参数**：可按 `decision/fact/preference/instruction/generic` 精确召回。
-- **存储诊断（`diagnostics`）**：`memory_status` 输出 `lines/corrupt` 存储健康信息。
-- **`CHANGELOG.md` 与 CI 工作流**：GitHub Actions（node 18/20/22 × typecheck/lint/format/test/build）；`npm run check` 一键全检。
+- `HubMetrics` 十项运行指标、有界捕获队列（背压 256）、`removeMany` 批量删除、`memory_recall.kind` 过滤、存储诊断、CI 工作流与 `npm run check`。
 
-### Changed（改进）
+### Changed
 
-- **写一致性升级**：`upsert/removeMany/importAll` 改为**先落盘成功后再变更内存**，并发读者永远只看到已确认状态，写失败天然无残留（移除原回滚逻辑）。
-- **快照缓存**：`list()` 热路径命中缓存 O(N) 拷贝返回，避免每次全量排序；任何结构性写入置脏。
-- **倒排索引缓存（`IndexCache`）**：`memory_recall` 按存储 `revision` 复用索引，语料未变时召回免全量 `buildIndex`，显著降低高频召回开销。
-- **去重加速**：`isDuplicate` 增加精确命中短路与长度窗口预筛（阈值语义不变），大库去重显著提速。
-- **错误分级完整化**：存储写入失败统一抛 `MemoryHubError(STORE_WRITE_FAILED)`，与读取失败同级可编程处理；存储目录创建失败同样包装为 `STORE_WRITE_FAILED`。
-- **compact 容错**：重建失败仅告警，绝不把"已成功写入"的调用变成失败。
-- **全量代码质量前沿化**：
-  - 空查询语义修正：tokenize 无检索词（纯标点/空白）的召回返回空数组，不再按热度误召回全库；
-  - 隐私权限细化：记忆文件首次创建即 0600（`appendFile` 显式 mode，不依赖 umask）；目录 0700 仅对**本插件新建**的目录生效，既有共享目录权限保持不变；
-  - `memory_forget` 对 id 统一 trim，删除副作用与返回值一致；
-  - 类型纯度：capture 非空断言消除、引擎编辑距离滚动数组 O(1) 行交换（原 O(n) 拷贝）、`IndexCache` 构建零断言写法，保留断言均附算法不变式证明注释；
-  - 性能资产：新增 `bench/recall.bench.ts`（vitest bench，`npm run bench`）量化 1K/10K 库召回/索引/缓存热点；
-  - 测试纵深：新增空查询短路、mkdir 失败错误码、目录权限细化、首写即 0600、forget trim、千级大库召回一致性共 13 用例（113 全绿；覆盖率 lines 91.68 / branches 87.91，均较上版提升）。
-
-### Fixed（缺陷修复）
-
-- 修复 `appendRaw` 写失败未包装为稳定错误码的问题（此前为原始 `Error`）。
-
-### 兼容性
-
-- `MemoryEntry` 数据契约、4 个工具名与参数、安装方式（tgz + `dsh plugin add` / 桌面插件页）完全不变；
-- `MemoryStore` 接口仅增加可选成员（`removeMany?` / `revision?` / `diagnostics?`），自定义实现仍可向后兼容。
+- 写一致性升级（先落盘后变更内存）、`list()` 快照缓存、`IndexCache` 索引复用、空查询短路（不按热度误召回全库）。
 
 ## [0.2.0] - 2026-10-05
 
 ### Added
 
-- TF·IDF 倒排索引检索（中文 2-gram + 英文单词分词、稀有词提权、评分基准可注入）；
-- NFKC 归一化敏感过滤（防全角/异体字符绕过），新增 AWS/GitHub/Slack/GCP/私钥/连接串模式；显式记忆同样拒绝敏感明文；
-- 专用 `extractFromAssistant` 提取器（aggressive 模式），修复 assistant 误用工具结果提取器；
-- `randomUUID()` 身份、目录 0700 / 文件 0600 隐私权限；
-- `MemoryHubError` 稳定错误码（EMPTY_CONTENT / SENSITIVE_CONTENT / STORE_* / NOT_FOUND / INTERNAL）；
-- eslint 9（typescript-eslint）+ prettier + vitest 覆盖率阈值 + prepack 守护；
-- 测试 77 个（并发写、tombstone/compact、召回质量、敏感绕过、捕获队列、契约纯净等）。
-
-### Changed
-
-- 存储从每次全量重写升级为 append-only JSONL + tombstone 逻辑删除 + compact 原子重建。
-
-### Security
-
-- 修复全角/异体字符绕过敏感过滤的 Unicode 安全问题。
+- TF·IDF 倒排索引检索、NFKC 归一化敏感过滤（防全角绕过）、`extractFromAssistant` 提取器、`MemoryHubError` 稳定错误码、目录 0700/文件 0600 隐私权限、eslint/prettier/覆盖率门槛。
 
 ## [0.1.0] - 2026-10-05
 
-- 首个可安装版本：本地 JSONL 会话记忆库、四工具（store/recall/forget/status）、事件驱动自动捕获；
-- 基础 TF·IDF 检索、去重窗口、TTL 清理；38 个测试。
+### Added
+
+- 初始版本：JSONL append-only 存储（tombstone + compact）、四工具（memory_store / memory_recall / memory_forget / memory_status）、事件驱动自动捕获（四档力度）、TTL 清理。

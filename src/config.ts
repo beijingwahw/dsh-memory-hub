@@ -83,12 +83,40 @@ export interface MemoryHubConfig {
    * 'auto'：写入时对「疑似反转 + 相近不可判取代」的旧条目建立 conflicts-with/conflict-of 双向标注。
    */
   conflictMode: 'off' | 'auto'
+  /**
+   * 1.1.1：矛盾检测独立窗口（默认 30 天）。
+   * 与 dedupWindowMs 解耦——信念反转的典型时距是数天到数周，复用 24h 去重窗口
+   * 会使跨周信念修正永远检测不到。
+   */
+  conflictWindowMs: number
   /** 1.1.0：图谱实体上限（默认 2000；超限按时间戳淘汰最旧边，LRU 语义） */
   graphMaxEntities: number
+  /**
+   * 1.2.0（DESIGN-1.2 模块 E）：激活扩散推理线。
+   * false（默认，零行为变化）：推理线不参与融合；
+   * true：图谱出边上的多跳关系链推理作为第五召回线（链证据可解释、asOf 时间线正确）。
+   */
+  inferEnabled: boolean
+  /** 1.2.0：推理链最大跳数（默认 2 = 一跳中介推理；钳制 1..3） */
+  inferMaxHops: number
   /** 1.1.0：蒸馏最小簇成员数（默认 3；低于该值的簇不产出，防单例噪音） */
   distillMinCluster: number
   /** 1.1.0：巩固可召回率阈值（默认 0.4；R(t) 低于该值且高价值 → 到期入巩固队列） */
   recallThreshold: number
+  /**
+   * 1.4.0（DESIGN-1.4 模块 I）：会话级加密存储口令（可选）。
+   * 非空时记忆文件逐行 AES-256-GCM 加密落盘（scrypt 派生密钥，密钥记录头存盐）；
+   * 空缺省 = 明文存储（与 1.3.0 逐字节一致）。环境变量 DSH_MEMORY_PASSPHRASE 同效，
+   * 优先级 config > 环境变量（避免口令写进配置文件）。
+   */
+  passphrase?: string
+  /**
+   * 1.5.0（DESIGN-1.5 模块 M）：本地向量第六召回线（零依赖 HNSW）。
+   * false（默认，零行为变化）：向量线不参与融合；
+   * true：同特征空间 TF·IDF 余弦近邻作为第六召回线（RRF 第六条秩 / interpolate 线性叠加），
+   * 配合 memory_recall vector 参数逐次开关。
+   */
+  vectorEnabled: boolean
 }
 
 export const defaultConfig: MemoryHubConfig = {
@@ -112,9 +140,14 @@ export const defaultConfig: MemoryHubConfig = {
   consolidationMode: 'off', // 1.1.0：默认不巩固（零行为变化）
   graphEnabled: false, // 1.1.0：默认图谱线不参与召回（零行为变化）
   conflictMode: 'off', // 1.1.0：默认不识别矛盾（零行为变化）
+  conflictWindowMs: 30 * 24 * 60 * 60 * 1000, // 1.1.1：矛盾检测独立窗口（30 天，与 dedup 24h 解耦）
   graphMaxEntities: 2000, // 1.1.0：图谱实体上限
+  inferEnabled: false, // 1.2.0：默认推理线不参与召回（零行为变化）
+  inferMaxHops: 2, // 1.2.0：推理链最大跳数（一跳中介推理）
   distillMinCluster: 3, // 1.1.0：蒸馏最小簇成员数
   recallThreshold: 0.4, // 1.1.0：巩固可召回率阈值
+  passphrase: '', // 1.4.0：默认明文存储（空口令；非空开启逐行 AES-256-GCM 加密）
+  vectorEnabled: false, // 1.5.0：默认向量线不参与召回（零行为变化）
 }
 
 /** schemastery Schema：供 Cordis 配置系统生成配置面板与校验 */
@@ -206,11 +239,23 @@ export const MemoryHubConfigSchema: Schema<MemoryHubConfig> = Schema.object({
   ])
     .description('1.1.0：信念修正与矛盾共存（DESIGN-1.1 模块 D）')
     .default(defaultConfig.conflictMode),
+  conflictWindowMs: Schema.number()
+    .description('1.1.1：矛盾检测时间窗口（ms，默认 30 天；信念反转常跨周，勿与去重窗口共用）')
+    .min(0)
+    .default(defaultConfig.conflictWindowMs),
   graphMaxEntities: Schema.number()
     .description('1.1.0：图谱实体上限（超限按时间戳淘汰最旧边）')
     .min(10)
     .max(100000)
     .default(defaultConfig.graphMaxEntities),
+  inferEnabled: Schema.boolean()
+    .description('1.2.0：激活扩散推理第五召回线（默认 false；true 时多跳关系链推理参与融合）')
+    .default(defaultConfig.inferEnabled),
+  inferMaxHops: Schema.number()
+    .description('1.2.0：推理链最大跳数（默认 2；1=直接关系，3=两跳中介推理上限）')
+    .min(1)
+    .max(3)
+    .default(defaultConfig.inferMaxHops),
   distillMinCluster: Schema.number()
     .description('1.1.0：蒸馏最小簇成员数（低于该值的簇不产出）')
     .min(2)
@@ -221,9 +266,74 @@ export const MemoryHubConfigSchema: Schema<MemoryHubConfig> = Schema.object({
     .min(0)
     .max(1)
     .default(defaultConfig.recallThreshold),
+  passphrase: Schema.string()
+    .description(
+      '1.4.0：会话级加密存储口令（可选；非空时记忆文件逐行 AES-256-GCM 加密落盘，空 = 明文）。推荐用环境变量 DSH_MEMORY_PASSPHRASE 传入以免口令落入配置文件',
+    )
+    .role('secret')
+    .default(''),
+  vectorEnabled: Schema.boolean()
+    .description('1.5.0：本地 HNSW 向量第六召回线（默认 false；true 时 TF·IDF 余弦近邻参与融合）')
+    .default(defaultConfig.vectorEnabled),
 })
 
-/** 解析用户配置，回填默认值 */
+/**
+ * 解析用户配置，回填默认值。
+ * 1.1.1：补齐**运行时钳制**——Schema 约束只有经 cordis 配置系统加载时才生效，
+ * 直连路径（测试、`ctx.plugin(entry, cfg)`）此前可注入任意非法值（如
+ * `captureMode: 'foo'`、负数 limit、字符串型 importSources 被逐字符迭代）。
+ * 两层防御：Schema 管面板生成与 UI 校验，normalize 做最终防线（枚举白名单、
+ * 数值钳制到 Schema 同构边界、数组/布尔类型纠正，非法值回落默认并保持可预测）。
+ */
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  return Math.max(min, Math.min(max, n))
+}
+
+function pickEnum<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback
+}
+
 export function normalizeConfig(partial: Partial<MemoryHubConfig> = {}): MemoryHubConfig {
-  return { ...defaultConfig, ...partial }
+  const merged = { ...defaultConfig, ...partial }
+  const captureModes: readonly CaptureMode[] = ['conservative', 'balanced', 'aggressive', 'off']
+  const onOff = ['off', 'auto'] as const
+  return {
+    ...merged,
+    storageDir: typeof merged.storageDir === 'string' ? merged.storageDir : '',
+    captureMode: pickEnum(merged.captureMode, captureModes, defaultConfig.captureMode),
+    autoTags: typeof merged.autoTags === 'boolean' ? merged.autoTags : defaultConfig.autoTags,
+    maxEntryChars: clampNum(merged.maxEntryChars, 10, 10000, defaultConfig.maxEntryChars),
+    defaultRecallTokens: clampNum(merged.defaultRecallTokens, 100, 100000, defaultConfig.defaultRecallTokens),
+    defaultRecallLimit: clampNum(merged.defaultRecallLimit, 1, 100, defaultConfig.defaultRecallLimit),
+    dedupWindowMs: Math.max(0, merged.dedupWindowMs),
+    conflictWindowMs: Math.max(0, merged.conflictWindowMs),
+    ttlDays: Math.max(0, merged.ttlDays),
+    recallDecayHalfLifeDays: Math.max(0, merged.recallDecayHalfLifeDays),
+    supersedeMode: pickEnum(merged.supersedeMode, onOff, defaultConfig.supersedeMode),
+    semanticBoost: typeof merged.semanticBoost === 'boolean' ? merged.semanticBoost : defaultConfig.semanticBoost,
+    fusionMode: pickEnum(merged.fusionMode, ['interpolate', 'rrf'] as const, defaultConfig.fusionMode),
+    maxEntries: Math.max(0, merged.maxEntries),
+    autoEvict: typeof merged.autoEvict === 'boolean' ? merged.autoEvict : defaultConfig.autoEvict,
+    themes: typeof merged.themes === 'boolean' ? merged.themes : defaultConfig.themes,
+    distillMode: pickEnum(merged.distillMode, onOff, defaultConfig.distillMode),
+    consolidationMode: pickEnum(merged.consolidationMode, onOff, defaultConfig.consolidationMode),
+    graphEnabled: typeof merged.graphEnabled === 'boolean' ? merged.graphEnabled : defaultConfig.graphEnabled,
+    conflictMode: pickEnum(merged.conflictMode, onOff, defaultConfig.conflictMode),
+    graphMaxEntities: clampNum(merged.graphMaxEntities, 10, 100000, defaultConfig.graphMaxEntities),
+    inferEnabled: typeof merged.inferEnabled === 'boolean' ? merged.inferEnabled : defaultConfig.inferEnabled,
+    inferMaxHops: clampNum(merged.inferMaxHops, 1, 3, defaultConfig.inferMaxHops),
+    distillMinCluster: clampNum(merged.distillMinCluster, 2, 20, defaultConfig.distillMinCluster),
+    recallThreshold: clampNum(merged.recallThreshold, 0, 1, defaultConfig.recallThreshold),
+    passphrase: typeof merged.passphrase === 'string' ? merged.passphrase : '',
+    vectorEnabled: typeof merged.vectorEnabled === 'boolean' ? merged.vectorEnabled : defaultConfig.vectorEnabled,
+    importSources: {
+      documents: Array.isArray(merged.importSources?.documents)
+        ? merged.importSources.documents.filter((d): d is string => typeof d === 'string')
+        : [],
+      sessionLogs: Array.isArray(merged.importSources?.sessionLogs)
+        ? merged.importSources.sessionLogs.filter((d): d is string => typeof d === 'string')
+        : [],
+    },
+  }
 }

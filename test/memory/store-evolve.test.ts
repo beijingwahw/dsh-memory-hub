@@ -3,22 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JsonlMemoryStore, contentHash } from '../../src/memory/store'
-import type { MemoryEntry } from '../../src/memory/types'
-
-function freshEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
-  const now = Date.now()
-  return {
-    id: `test-${now}-${Math.random().toString(36).slice(2, 8)}`,
-    kind: 'fact',
-    content: `content-${Math.random().toString(36).slice(2, 10)}`,
-    tags: ['auto'],
-    source: 'auto',
-    createdAt: now,
-    updatedAt: now,
-    accessCount: 0,
-    ...overrides,
-  }
-}
+import { freshEntry } from './utils'
 
 describe('JsonlMemoryStore 0.2.0 演进', () => {
   it('兼容 0.1.0 旧格式（逐行整条目，无 tombstone）', async () => {

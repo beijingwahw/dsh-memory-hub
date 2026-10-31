@@ -1,7 +1,13 @@
 node_modules/
 lib/
 dist/
+# 发布产物一律不入库（tgz/zip 均为 npm pack / 手工打包生成物）
 *.tgz
+*.zip
+# 生成物：评估报告与根目录质检快照（历史快照已归档 docs/history/）
+eval/reports/
+/quality-report-*.md
+CODE-WALKTHROUGH.html
 *.log
 .DS_Store
 coverage/

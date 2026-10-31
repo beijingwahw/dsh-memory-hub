@@ -98,9 +98,12 @@ describe('compact 容错（L10）', () => {
     const file = join(dir, 'mem.jsonl')
     const logs: string[] = []
     const store = await JsonlMemoryStore.open(file, (m) => logs.push(m))
-    // open 阶段的 readFile（文件不存在 → 真实抛 ENOENT 已被 open 吞掉）已消耗；
-    // 下一个 readFile 即 verifyCompact 自检读 → 注入与内存不符的内容，触发 mismatch 告警
-    mocked.readFile.mockImplementationOnce(() => Promise.resolve('{"unexpected":true}\n'))
+    // 1.1.1 起 compact 先做回放式合并读（第 1 次 readFile，失败仅降级为本地快照），
+    // 再做自检读（第 2 次 readFile）——注入顺序：回放读故障走静默降级，
+    // 自检读注入与预期不符的内容，触发 mismatch 告警
+    mocked.readFile
+      .mockRejectedValueOnce(new Error('replay unavailable'))
+      .mockImplementationOnce(() => Promise.resolve('{"unexpected":true}\n'))
 
     await forceCompact(store, entry('保留条目', { id: 'keep-f2' }))
     expect(logs.some((l) => l.includes('compact self-check mismatch'))).toBe(true)
@@ -113,7 +116,8 @@ describe('compact 容错（L10）', () => {
     const file = join(dir, 'mem.jsonl')
     const logs: string[] = []
     const store = await JsonlMemoryStore.open(file, (m) => logs.push(m))
-    mocked.readFile.mockRejectedValueOnce(new Error('io error')) // verifyCompact 读盘失败
+    // 1.1.1：第 1 次 readFile（回放合并）故障走静默降级；第 2 次（verifyCompact）读盘失败 → 告警
+    mocked.readFile.mockRejectedValueOnce(new Error('replay unavailable')).mockRejectedValueOnce(new Error('io error'))
 
     await forceCompact(store, entry('保留条目', { id: 'keep-f3' }))
     expect(logs.some((l) => l.includes('compact self-check read failed'))).toBe(true)
@@ -185,7 +189,8 @@ describe('0.9.0 质量门补位：compact/corrupt/closed 剩余分支', () => {
     const file = join(dir, 'mem.jsonl')
     const logs: string[] = []
     const store = await JsonlMemoryStore.open(file, (m) => logs.push(m))
-    mocked.readFile.mockRejectedValueOnce('io error (string)')
+    // 1.1.1：第 1 次 readFile（回放合并）静默降级；第 2 次（自检）失败且非 Error → String(err) 分支
+    mocked.readFile.mockRejectedValueOnce('replay (string)').mockRejectedValueOnce('io error (string)')
     await forceCompact(store, entry('保留条目', { id: 'keep-s2' }))
     expect(logs.some((l) => l.includes('compact self-check read failed') && l.includes('io error (string)'))).toBe(true)
     await store.close()

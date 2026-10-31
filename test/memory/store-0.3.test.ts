@@ -6,21 +6,7 @@ import { ErrorCodes } from '../../src/errors'
 import { IndexCache, isDuplicate } from '../../src/memory/engine'
 import { JsonlMemoryStore } from '../../src/memory/store'
 import type { MemoryEntry } from '../../src/memory/types'
-
-function freshEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
-  const now = Date.now()
-  return {
-    id: `t-${now}-${Math.random().toString(36).slice(2, 8)}`,
-    kind: 'fact',
-    content: `content-${Math.random().toString(36).slice(2, 10)}`,
-    tags: [],
-    source: 'auto',
-    createdAt: now,
-    updatedAt: now,
-    accessCount: 0,
-    ...overrides,
-  }
-}
+import { freshEntry } from './utils'
 
 async function openStore(dir: string) {
   return JsonlMemoryStore.open(join(dir, 'mem.jsonl'))

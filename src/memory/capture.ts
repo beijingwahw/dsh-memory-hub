@@ -9,6 +9,7 @@
  * 全部为纯函数，便于单测覆盖。
  */
 import type { MemoryKind } from './types'
+import { safeSlice } from './entry-factory'
 
 /** 捕获模式：off / conservative / balanced / aggressive */
 export type CaptureMode = 'off' | 'conservative' | 'balanced' | 'aggressive'
@@ -236,8 +237,8 @@ export function extractFromToolResult(
     // 长输出不做整段入库，取摘要头
     if (mode === 'aggressive') {
       return autoTags
-        ? [{ kind: 'fact', content: `${toolName}: ${outputText.slice(0, 120)}…`, tags: ['auto', 'fact', toolName] }]
-        : [{ kind: 'fact', content: `${toolName}: ${outputText.slice(0, 120)}…`, tags: [] }]
+        ? [{ kind: 'fact', content: `${toolName}: ${safeSlice(outputText, 120)}…`, tags: ['auto', 'fact', toolName] }]
+        : [{ kind: 'fact', content: `${toolName}: ${safeSlice(outputText, 120)}…`, tags: [] }]
     }
     return []
   }
@@ -251,7 +252,7 @@ export function extractFromToolResult(
 
   if (!looksConclusive) return []
 
-  const content = `${toolName} 执行结果: ${trimmed.slice(0, 300)}`
+  const content = `${toolName} 执行结果: ${safeSlice(trimmed, 300)}`
   return autoTags
     ? [{ kind: 'fact', content, tags: ['auto', 'fact', toolName] }]
     : [{ kind: 'fact', content, tags: [] }]
@@ -267,8 +268,8 @@ export function extractFromAssistant(
   const trimmed = text.trim()
   if (/(结论|总结|要点|建议|推荐|decision|summary|conclusion)/i.test(trimmed.slice(0, 80))) {
     return autoTags
-      ? [{ kind: 'generic', content: trimmed.slice(0, 300), tags: ['auto', 'summary'] }]
-      : [{ kind: 'generic', content: trimmed.slice(0, 300), tags: [] }]
+      ? [{ kind: 'generic', content: safeSlice(trimmed, 300), tags: ['auto', 'summary'] }]
+      : [{ kind: 'generic', content: safeSlice(trimmed, 300), tags: [] }]
   }
   return []
 }
@@ -276,7 +277,7 @@ export function extractFromAssistant(
 /** 截取包含信号词的小句子（≤160 字符） */
 function extractSnippet(text: string, hint: string): string {
   const idx = text.toLocaleLowerCase().indexOf(hint.toLocaleLowerCase())
-  if (idx < 0) return text.slice(0, 160)
+  if (idx < 0) return safeSlice(text, 160)
   const start = Math.max(0, idx - 20)
   const end = Math.min(text.length, idx + hint.length + 120)
   return text.slice(start, end).trim()

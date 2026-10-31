@@ -94,6 +94,52 @@ export function toMemoryEntry(value: unknown): MemoryEntry | undefined {
 /** 检索引擎返回的命中结果（score 为拍入时计算） */
 export interface MemoryHit extends MemoryEntry {
   score: number
+  /**
+   * 1.2.0（DESIGN-1.2 模块 F）：召回溯源注记——「为什么这条记忆被召回」。
+   * 仅 explain=true 时附带（缺省不产生，输出形状与 1.1.1 一致）；score 与
+   * MemoryHit.score 同源（非重算），perLine 为各线实际参与融合的贡献。
+   */
+  why?: RecallProvenance
+}
+
+/** 1.2.0：召回线标识（固定序：词面 / 容错 / 语义 / 图谱 / 推理 / 向量；1.5.0 追加末尾） */
+export type RecallLine = 'bm25' | 'fuzzy' | 'semantic' | 'graph' | 'infer' | 'vector'
+
+/**
+ * 1.2.0（DESIGN-1.2 模块 F）：单条命中的召回溯源。
+ * - interpolate：lines[].value = 各线**实际加分**的加权项系数（score 按增量序累加，非重算）；
+ * - rrf：lines[].value = 各线倒数秩贡献 1/(RRF_K + rank)（与融合算术同序同值）；
+ * - lineBase = 公共权重因子 decay×heat×significance×supersededFactor。
+ * 可解释性契约：lines 非空、按召回线固定序排列、score 同源于最终分。
+ */
+export interface RecallProvenance {
+  fusion: 'interpolate' | 'rrf'
+  /** 参与融合的召回线及其贡献（固定序 bm25/fuzzy/semantic/graph/infer） */
+  lines: ReadonlyArray<{ line: RecallLine; value: number }>
+  lineBase: number
+  score: number
+  /**
+   * 1.3.0（DESIGN-1.3 模块 H）：推理证据链（仅 explain=true 且该命中的 why 含 infer 线时
+   * 附带）。列出支撑该命中的推理链（按链强度降序，至多 3 条）：终结实体关联到本条目、
+   * 路径可回放（A—使用→B—依赖→C）、每条边带关系置信度与发生时刻。
+   */
+  chains?: ReadonlyArray<RecallInferChainView>
+}
+
+/** 1.3.0：why.chains 的对外形状（InferChain 的可序列化投影：路径边 + 终结实体 + 链强度） */
+export interface RecallInferChainView {
+  /** 证据路径（hops 条边；path[0].from 为查询种子实体） */
+  path: ReadonlyArray<{
+    from: string
+    relation: string
+    to: string
+    confidence: number
+    occurredAt: number
+  }>
+  /** 终结实体（= path 最后一条边的 to；其关联条目含本命中） */
+  terminal: string
+  /** 链强度 = ∏confidence × 0.5^hops × exp(−最旧边年龄/τ) */
+  score: number
 }
 
 /** 存储层读写接口，便于测试注入内存实现 */
@@ -107,8 +153,8 @@ export interface MemoryStore {
   upsertMany?(entries: MemoryEntry[]): Promise<number>
   /** 按 id 删除，返回是否删除成功 */
   remove(id: string): Promise<boolean>
-  /** 批量删除，返回实际删除数（0.3.0 新增；缺省实现可退化为逐个 remove） */
-  removeMany?(ids: string[]): Promise<number>
+  /** 批量删除，返回实际删除数（0.3.0 新增；缺省实现可退化为逐个 remove）。1.3.0：可选 now = 删除时刻（tombstone 时间戳，情景回放判定用） */
+  removeMany?(ids: string[], now?: number): Promise<number>
   /**
    * 全量遍历。契约（1.0.0 显式化，对应 DESIGN-1.0 疑点 5）：
    * 返回**只读共享视图**，调用方不得修改返回数组或其元素；
@@ -117,6 +163,19 @@ export interface MemoryStore {
    * 仍可能导致调用方自身数据污染——调用方必须遵守只读契约。
    */
   list(): Promise<MemoryEntry[]>
+  /**
+   * 1.3.0（DESIGN-1.3 模块 G，可选成员）：情景回放——返回 asOf 时刻的存活条目集
+   * （存在性 / 内容版本 / 取代与矛盾标注 / 访问热度均为该时刻状态）。
+   * JSONL append-only 实现支持；不支持回放的实现由调用方降级处理（memory_recall
+   * 的 asOf 参数退化为 createdAt 过滤，见工具层文档）。只读、不占写链。
+   */
+  listAsOf?(asOf: number): Promise<MemoryEntry[]>
+  /**
+   * 1.5.0（DESIGN-1.5 模块 O，可选成员）：记忆时间轴——append-only 日志单遍回放出的
+   * 按天分桶事件流（新增/删除/更新/热度）+ 存活总量走势。JSONL 实现支持；
+   * 不支持的实现由调用方降级为 createdAt 近似（只有新增事件）。只读。
+   */
+  timeline?(cap?: number): Promise<MemoryTimeline>
   /** 按 id 精确读取 */
   get(id: string): Promise<MemoryEntry | undefined>
   /** 批量写入（导入用） */
@@ -199,6 +258,43 @@ export interface RecallOptions {
   graphMaxHop?: number
   /** 1.1.0：图谱线叠加权重（interpolate 模式；默认 GRAPH_LINE_WEIGHT=0.35） */
   graphWeight?: number
+  /**
+   * 1.2.0（DESIGN-1.2 模块 E）：激活扩散推理线开关（默认 false）。
+   * 仅 graph 已注入且为 true 时启用（推理线沿图谱出边扩散）；缺省不计算，
+   * 召回结果与 1.1.1 逐字节一致。
+   */
+  inferEnabled?: boolean
+  /** 1.2.0：推理链最大跳数（默认 2；钳制 1..3，1=直接关系 2=一跳中介推理） */
+  inferMaxHops?: number
+  /** 1.2.0：推理线叠加权重（interpolate 模式；默认 INFER_LINE_WEIGHT=0.25） */
+  inferWeight?: number
+  /**
+   * 1.2.0（DESIGN-1.2 模块 F）：召回溯源开关（默认 false）。
+   * true 时每条命中附带 why 字段（参与融合的召回线/各线贡献/权重因子/同源最终分）；
+   * 纯读侧注记，不参与任何评分算术路径。
+   */
+  explain?: boolean
+  /**
+   * 1.5.0（DESIGN-1.5 模块 M）：本地向量召回源（HNSW 近似最近邻，零依赖）。
+   * 传入只读索引（vector.ts 的 VectorRecallIndex）且 vectorEnabled=true 时，
+   * 向量线作为第六召回线参与融合（rrf 模式按第六条秩融合；interpolate 模式按
+   * vectorWeight 线性叠加）。默认 undefined → 向量线不参与，行为与 1.4.0 逐字节一致。
+   */
+  vector?: VectorRecallSource
+  /** 1.5.0：向量第六召回线开关（默认 false；仅 vector 已注入且为 true 时启用） */
+  vectorEnabled?: boolean
+  /** 1.5.0：向量线叠加权重（interpolate 模式；默认 VECTOR_LINE_WEIGHT=0.3） */
+  vectorWeight?: number
+}
+
+/**
+ * 1.5.0（DESIGN-1.5 模块 M）：向量召回线只读接口。
+ * types.ts 层以接口约束（与 GraphRecallSource 同形态，不依赖 vector.ts 避免类型层
+ * 循环依赖）；VectorRecallIndex 结构实现该接口：查询文本 → HNSW top-k 余弦相似度。
+ */
+export interface VectorRecallSource {
+  /** 查询文本 → {条目 id: 余弦相似度}（内部完成同特征空间向量化与 ANN 检索） */
+  search(query: string, k?: number): ReadonlyMap<string, number>
 }
 
 /**
@@ -211,6 +307,20 @@ export interface GraphRecallSource {
   neighborEntityScores(queryEntities: readonly string[], now: number, maxHop?: number): Map<string, number>
   /** 反查：实体 → 提及该实体的条目 id 集（图谱线计分反查入口） */
   entryIdsByEntity(entity: string): readonly string[]
+  /**
+   * 1.1.1 对齐层（可选实现）：查询 token → 共享特异 token 的图实体键。
+   * 自然语言问句与图键零精确匹配时的兜底信号；未实现的图源自动跳过（零破坏）。
+   */
+  alignByTokens?(tokens: readonly string[]): readonly string[]
+  /**
+   * 1.2.0 推理线（可选实现）：实体在时刻 now 的活跃出边（asOf 时间线过滤后的
+   * 只读视图），按 (target, relation) 字典序确定性排序。激活扩散推理线遍历入口；
+   * 未实现的图源 inferChains 直接返回空（推理线自动失效，零破坏）。
+   */
+  activeOutEdges?(
+    entity: string,
+    now: number,
+  ): ReadonlyArray<{ relation: string; target: string; confidence: number; occurredAt: number }>
 }
 
 /**
@@ -237,4 +347,34 @@ export interface MemoryStats {
   superseded?: number
   /** 1.0.0：主题数（仅 status 按需计算；absent = 未计算） */
   themes?: number
+}
+
+/**
+ * 1.5.0（DESIGN-1.5 模块 O）：记忆时间轴的单日分桶。
+ * added/removed/updated/heat 为该日时间锚定事件计数；total 为该日终态存活条目数
+ * （回放口径：running + added − removed，负值钳 0）。
+ */
+export interface TimelineBucket {
+  /** UTC 日（yyyy-mm-dd） */
+  day: string
+  added: number
+  removed: number
+  /** 内容/标签/取代矛盾版本推进（非纯热度） */
+  updated: number
+  /** 仅访问热度回写（召回巩固的日常足迹） */
+  heat: number
+  total: number
+}
+
+/** 1.5.0（模块 O）：记忆时间轴（append-only 日志单遍回放，纯函数可复算） */
+export interface MemoryTimeline {
+  /** 首个时间锚定事件的时刻（空库为 0） */
+  firstAt: number
+  /** 最后时间锚定事件的时刻（空库为 0） */
+  lastAt: number
+  /** 时间锚定事件总数（added+removed+updated+heat） */
+  events: number
+  /** 分桶超出 cap 时仅保留最近的桶 */
+  truncated: boolean
+  buckets: TimelineBucket[]
 }

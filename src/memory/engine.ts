@@ -1,103 +1,58 @@
 /**
- * 记忆检索引擎。
+ * 记忆检索引擎（1.1.1 模块化重构后只保留「检索与评分」职责）。
  *
  * 纯函数、无 IO，便于单测与未来替换为向量检索：
- * - 分词：英文按单词（NFKC 折叠 + 停止词过滤）、中文按字与二字组，构建轻量倒排词频；
  * - 评分：Okapi BM25（词频饱和 + 文档长度归一化） × 时间衰减 × 访问热度加权；
- * - 预算裁剪：按 token 估算逐条累加，超出 maxTokens 即截断（首条必含）；
- * - 去重：内容哈希 + 编辑距离近似度双保险；
- * - 衰减：按 ttlDays / 最近访问时间做过期标记，由调用方决定是否清理。
+ * - 容错/语义兜底：编辑距离 ≤1 变体（fuzzy.ts）+ MinHash/特征覆盖率（本模块）；
+ * - 融合：interpolate 线性插值 / RRF 倒数排名融合 + 图谱第四线（graph.ts）；
+ * - 预算裁剪：按 token 估算逐条累加，超出 maxTokens 跳过该条尝试更短命中（首条必含）；
+ * - 生命周期：热度/显著性评分、TTL 过期、价值淘汰、统计。
+ *
+ * 1.1.1 拆分（god-module 治理）：分词（tokenize.ts）、近似匹配（fuzzy.ts）、
+ * 内容去重（dedup.ts）、主题聚类（themes.ts）、内容指纹（hash.ts）已下沉为独立
+ * 模块；本文件 re-export 全部既有导出，所有 `from './engine'` 导入路径零变更。
  */
-import { createHash } from 'node:crypto'
 import { graphLineScores, GRAPH_LINE_WEIGHT } from './graph'
-import { contentHash } from './store'
-import type { MemoryEntry, MemoryHit, MemoryKind, MemoryStats, RecallOptions } from './types'
+import { fingerprint } from './hash'
+import { inferLineScores, INFER_LINE_WEIGHT, type InferChain } from './infer'
+import { tokenize, tokenCounts, estimateTokens, isStopWord, fnv1a, semanticFeatures } from './tokenize'
+import { fuzzyVariants, FUZZY_MIN_WORD_LEN, FUZZY_VARIANT_WEIGHT } from './fuzzy'
+import { VECTOR_LINE_TOP_K, VECTOR_LINE_WEIGHT, buildVectorIndex } from './vector'
+import type {
+  MemoryEntry,
+  MemoryHit,
+  MemoryKind,
+  MemoryStats,
+  RecallInferChainView,
+  RecallLine,
+  RecallOptions,
+} from './types'
 
-/** 简单 token 估算：中文字符按 1 token/字、其他按 4 字符/token 的近似值 */
-export function estimateTokens(text: string): number {
-  let tokens = 0
-  for (const ch of text) {
-    if (ch.charCodeAt(0) > 0x2e7f) {
-      tokens += 1 // CJK 等宽字符
-    } else if (/[\w]/.test(ch)) {
-      tokens += 0.25 // 字母数字，每 4 个 1 token
-    } else {
-      tokens += 0.5
-    }
-  }
-  return Math.max(1, Math.ceil(tokens))
-}
-
-/** 英文高频虚词（无检索价值的停用词）；中文 2-gram 不设停止词（双字对天然含语义） */
-const STOP_WORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'is',
-  'are',
-  'was',
-  'were',
-  'be',
-  'been',
-  'being',
-  'of',
-  'to',
-  'and',
-  'or',
-  'for',
-  'with',
-  'in',
-  'on',
-  'at',
-  'by',
-  'from',
-  'as',
-  'it',
-  'its',
-  'this',
-  'that',
-  'these',
-  'those',
-  'he',
-  'she',
-  'they',
-  'we',
-  'you',
-  'your',
-  'his',
-  'her',
-  'their',
-  'have',
-  'has',
-  'had',
-  'do',
-  'does',
-  'did',
-  'not',
-  'no',
-  'but',
-  'so',
-  'if',
-  'then',
-  'than',
-  'too',
-  'very',
-  'can',
-  'will',
-  'just',
-  'should',
-  'would',
-  'could',
-])
+// 1.1.1 模块拆分 re-export：保持既有 `from './engine'` 导入路径全部兼容（零调用方变更）
+// 1.5.0：fnv1a/semanticFeatures 下沉 tokenize、fingerprint 下沉 hash（vector.ts 共享，
+// 避免 engine↔vector 循环依赖），re-export 保持既有导入路径零变更
+export { estimateTokens, tokenize, tokenCounts, fnv1a, semanticFeatures, semanticFeatureCounts } from './tokenize'
+export { fingerprint } from './hash'
+export { FUZZY_MIN_WORD_LEN, FUZZY_VARIANT_WEIGHT, fuzzyVariants, levenshtein, similarity } from './fuzzy'
+export { detectDuplicate, findDuplicate, isDuplicate } from './dedup'
+export { clusterThemes, MAX_CLUSTER_DF, tokenThemeId } from './themes'
+export type { ThemeCluster } from './themes'
+export {
+  inferChains,
+  inferLineScores,
+  INFER_BEAM,
+  INFER_DEFAULT_MAX_HOPS,
+  INFER_HOP_DECAY,
+  INFER_LINE_WEIGHT,
+  INFER_MAX_CHAINS,
+  INFER_MAX_HOPS_LIMIT,
+} from './infer'
+export type { InferChain, InferChainOptions, InferEdge } from './infer'
 
 // ---------------------------------------------------------------------------
 // 0.5.0 深度创新：容错检索（A1）与近似语义召回（A2）
+// （A1 的变体生成/编辑距离已下沉 fuzzy.ts；此处保留容错线的检索侧编排）
 // ---------------------------------------------------------------------------
-
-/** 模糊变体权重：仅当精确 BM25 为零时以 0.5 折扣计入（不干扰精确命中排序） */
-export const FUZZY_VARIANT_WEIGHT = 0.5
-/** 触发模糊变体扩展的最小英文词长（过短词的变体噪音大、信息量低） */
-export const FUZZY_MIN_WORD_LEN = 4
 
 /** MinHash 签名维度（k=16：在可复算性与候选剪枝效果间取平衡；评分本身用精确覆盖率，故不依赖签名精度） */
 export const MINHASH_K = 16
@@ -119,6 +74,24 @@ export const SEMANTIC_HIT_WEIGHT = 0.3
 export const SUPERSEDED_PENALTY_DEFAULT = 0.5
 /** 1.0.0（DESIGN-1.0 模块 B）：RRF 融合常数（Reciprocal Rank Fusion 惯例 k=60） */
 export const RRF_K = 60
+
+/**
+ * 1.2.0（DESIGN-1.2 模块 F）：召回线固定序（溯源 lines 的输出顺序；新增线只允许追加末尾）。
+ * 1.5.0（DESIGN-1.5 模块 M）：向量线追加为第六条（末尾，既有序不变）。
+ */
+const RECALL_LINE_ORDER: readonly RecallLine[] = ['bm25', 'fuzzy', 'semantic', 'graph', 'infer', 'vector']
+
+/**
+ * 1.2.0 溯源内部结构：候选 id →（interpolate 加权项 | rrf 各线 raw 分）+ 公共权重因子。
+ * 不导出（纯实现细节）；对外形状见 types.RecallProvenance。
+ */
+interface ProvenanceEntry {
+  lineBase: number
+  /** interpolate：按实际加分顺序的 [线, 加权项系数]（每线至多一项） */
+  terms?: Array<[RecallLine, number]>
+  /** rrf：参与融合的各线 raw 分（rank 由 rrfFuseCandidates 输出） */
+  raw?: Partial<Record<RecallLine, number>>
+}
 
 /**
  * 1.0.0（DESIGN-1.0 模块 A）：被取代记忆判定（tags 含 superseded-by: 前缀）。
@@ -149,15 +122,7 @@ const MINHASH_SEEDS = [
   0x9ff1c4a3, 0x9c9f9a3b, 0x2b0e93b0, 0x51f0a8dd, 0x7f5f9e5d, 0x5b0f3d5b, 0x45df27b3,
 ] as const
 
-/** FNV-1a 32 位散列（纯函数、无密码学依赖，供 MinHash 使用） */
-export function fnv1a(input: string, seed: number): number {
-  let hash = (0x811c9dc5 ^ seed) >>> 0
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return hash >>> 0
-}
+/** FNV-1a 32 位散列（1.5.0 下沉 tokenize.ts；此处经顶部 import 使用，re-export 见文件头） */
 
 /** 对 token 集合计算 k 维 MinHash 签名（每维取该维散列的最小值） */
 export function minhashSignature(tokens: Iterable<string>): number[] {
@@ -240,125 +205,13 @@ export function sampleCoverage(sample: readonly string[], doc: ReadonlySet<strin
 
 /**
  * MinHash 特征集（A2 语义召回的特征空间）。
- *
- * 关键设计：特征必须与 BM25 词面命中**不同源**，否则「精确零命中」时 Jaccard 恒为 0，
- * 语义兜底会退化为死代码。因此英文/数字词在此展开为**字符 3-gram**（附首尾边界标记）：
- * 词根/形态变体（deploy ↔ deployment、auth ↔ authentication）即使整词不重叠，
- * 也在字符层面共享大量 3-gram，可被 Jaccard 兜底召回；中文 2-gram 本身即字符级，原样保留。
+ * 1.5.0 下沉 tokenize.ts（semanticFeatures/semanticFeatureCounts，向量第六线同源）；
+ * 此处经顶部 import 使用，re-export 见文件头——行为与 1.4.0 逐位一致。
  */
-export function semanticFeatures(text: string): Set<string> {
-  const features = new Set<string>()
-  for (const t of tokenize(text)) {
-    if (/^[a-z0-9_]{3,}$/.test(t)) {
-      features.add('^' + t.slice(0, 2))
-      for (let i = 0; i + 3 <= t.length; i++) features.add(t.slice(i, i + 3))
-      features.add(t.slice(-2) + '$')
-    } else {
-      features.add(t)
-    }
-  }
-  return features
-}
-
-/**
- * 生成英文词的编辑距离 ≤ 1 变体（删除 / 相邻交换 / 替换 / 插入）。
- * 仅处理小写纯字母词（由调用方保证），返回去重变体集（不含原词自身）。
- */
-export function fuzzyVariants(word: string): Set<string> {
-  const variants = new Set<string>()
-  const n = word.length
-  const letters = 'abcdefghijklmnopqrstuvwxyz'
-  // 删除（单字符）
-  for (let i = 0; i < n; i++) variants.add(word.slice(0, i) + word.slice(i + 1))
-  // 相邻交换：charAt 越界返回 ''，但循环条件 i+1 < n 保证不越界，等价于 word[i+1]!
-  for (let i = 0; i + 1 < n; i++) {
-    variants.add(word.slice(0, i) + word.charAt(i + 1) + word.charAt(i) + word.slice(i + 2))
-  }
-  // 替换与插入
-  for (let i = 0; i < n; i++) {
-    for (const ch of letters) {
-      if (ch !== word.charAt(i)) variants.add(word.slice(0, i) + ch + word.slice(i + 1))
-      variants.add(word.slice(0, i) + ch + word.slice(i))
-    }
-  }
-  // 末尾插入
-  for (const ch of letters) variants.add(word + ch)
-  return variants
-}
-
-/**
- * 提取检索词：英文单词小写（NFKC 折叠全角）+ 连续 CJK 串按 2-gram 切分。
- * 英文单字（<2）与停止词被过滤；数字/下划线词保留（如版本号、代码标识）。
- */
-export function tokenize(text: string): string[] {
-  const tokens: string[] = []
-  const lower = text.normalize('NFKC').toLocaleLowerCase()
-  // 英文/数字词
-  for (const m of lower.matchAll(/[a-z0-9_]+/g)) {
-    const w = m[0]
-    if (w.length < 2) continue
-    if (/^[a-z]+$/.test(w) && STOP_WORDS.has(w)) continue
-    tokens.push(w)
-  }
-  // 中文：去除非 CJK 后按 2-gram
-  const cjk = lower.replace(/[^\u4e00-\u9fff]/g, '')
-  if (cjk.length === 1) tokens.push(cjk)
-  for (let i = 0; i + 1 < cjk.length; i++) {
-    tokens.push(cjk.slice(i, i + 2))
-  }
-  return tokens
-}
-
-/** 文本的 token 集合（去重） */
-function tokenSet(text: string): Set<string> {
-  return new Set(tokenize(text))
-}
-
-/**
- * 编辑距离（滚动两行 DP）。
- *
- * 算法不变式：进入第 i 行前 prev[0..b.length] 已完整填充；每行自左向右写 cur，
- * 只读 cur[j-1]（本轮左邻）与 prev[j]/prev[j-1]（上一行），所有读取点在访问时
- * 均已赋值。此处 `!` 是对该不变式的收敛断言，可由上述不变式直接证明。
- */
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0
-  // 0.8.0：空串分支（return b.length / a.length）经不变式证明不可达——本函数仅供 similarity 调用，
-  // 而 similarity 入口先以 `if (!a || !b) return 0` 拦截空串；滚动数组实现对空串语义等价，予以移除
-  let prev = new Array<number>(b.length + 1)
-  let cur = new Array<number>(b.length + 1)
-  for (let j = 0; j <= b.length; j++) prev[j] = j
-  for (let i = 1; i <= a.length; i++) {
-    cur[0] = i
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + cost)
-    }
-    // 整行交换引用而非拷贝，时间复杂度由 O(b.length) 降至 O(1)
-    ;[prev, cur] = [cur, prev]
-  }
-  return prev[b.length]!
-}
-
-/** 归一化相似度：1 表示完全相同 */
-export function similarity(a: string, b: string): number {
-  if (!a || !b) return 0
-  const maxLen = Math.max(a.length, b.length)
-  // 0.8.0：maxLen === 0 已由上守卫（!a || !b）先行返回，此分支经不变式证明不可达，予以移除
-  if (maxLen > 300) {
-    // 长文本用 token 集合 Jaccard 近似
-    const sa = tokenSet(a)
-    const sb = tokenSet(b)
-    if (sa.size === 0 || sb.size === 0) return 0
-    let inter = 0
-    for (const t of sa) if (sb.has(t)) inter++
-    return inter / (sa.size + sb.size - inter)
-  }
-  return 1 - levenshtein(a, b) / maxLen
-}
 
 // ---------------------------------------------------------------------------
 // 倒排索引（供索引化召回与测试验证）
+// （分词/编辑距离/相似度已下沉 tokenize.ts / fuzzy.ts）
 // ---------------------------------------------------------------------------
 
 /** 条目 id → 词频向量 */
@@ -428,7 +281,7 @@ function collectFuzzyTerms(qTf: ReadonlyMap<string, number>, df: ReadonlyMap<str
   for (const t of qTf.keys()) {
     if (t.length < FUZZY_MIN_WORD_LEN || !/^[a-z]+$/.test(t)) continue
     for (const v of fuzzyVariants(t)) {
-      if (v.length < 2 || STOP_WORDS.has(v)) continue
+      if (v.length < 2 || isStopWord(v)) continue
       if (!df.has(v)) continue
       seen.add(v)
     }
@@ -489,6 +342,29 @@ export function queryIndex(
         })
       : undefined
   const graphWeight = options.graphWeight ?? GRAPH_LINE_WEIGHT
+  // 1.2.0（DESIGN-1.2 模块 E）：激活扩散推理线——graph 注入且 inferEnabled=true 时启用；
+  // 默认（缺省 false）不计算，召回行为与 1.1.1 逐字节零变化。
+  // 1.3.0（DESIGN-1.3 模块 H）：explain=true 时同步收集推理链（纯出参，评分路径零改动），
+  // 供最终命中的 why.chains 证据暴露。
+  const inferChainsOut: InferChain[] | undefined = options.explain === true ? [] : undefined
+  const inferScores =
+    options.inferEnabled === true && graphSource !== undefined
+      ? inferLineScores(graphSource, query, entriesBy, now, {
+          ...(options.inferMaxHops !== undefined ? { maxHops: options.inferMaxHops } : {}),
+          ...(inferChainsOut !== undefined ? { chainsOut: inferChainsOut } : {}),
+        })
+      : undefined
+  const inferWeight = options.inferWeight ?? INFER_LINE_WEIGHT
+  // 1.5.0（DESIGN-1.5 模块 M）：本地向量第六召回线——vector 注入且 vectorEnabled=true 时
+  // 启用（HNSW top-k 余弦相似度）；缺省（false / 未注入）不计算，行为与 1.4.0 逐字节一致。
+  const vectorScores =
+    options.vectorEnabled === true && options.vector !== undefined
+      ? options.vector.search(query, VECTOR_LINE_TOP_K)
+      : undefined
+  const vectorWeight = options.vectorWeight ?? VECTOR_LINE_WEIGHT
+  // 1.2.0（DESIGN-1.2 模块 F）：召回溯源——explain=true 时记录每候选参与融合的各线证据。
+  // 纯注记：不进入任何评分分支的算术路径（explain 开关不改变任何 score 计算）。
+  const prov = options.explain === true ? new Map<string, ProvenanceEntry>() : undefined
 
   // 公共权重因子（decay×heat×sig×supersededFactor）——三线共享，RRF 融合后整体施加；
   // 1.1.0 起抽成函数：图谱线补录候选（interpolate 模式图分叠加）也需要它。
@@ -526,7 +402,9 @@ export function queryIndex(
       for (const v of fuzzyTerms) {
         const etf = vec.get(v)
         if (!etf) continue
-        const tfSat = (etf * (BM25_K1 + 1)) / (etf + lenNorm)
+        // 1.1.1：容错线改用注入的 k1（原硬编码 BM25_K1 导致调参时精确/容错两线公式不一致，
+        // eval 网格结果被污染）；lenNorm 本就按注入值计算，两线自此同参
+        const tfSat = (etf * (k1 + 1)) / (etf + lenNorm)
         fuzzy += FUZZY_VARIANT_WEIGHT * idf(v) * tfSat
       }
     }
@@ -560,6 +438,11 @@ export function queryIndex(
     // 缺省 = 既有常量 SEMANTIC_HIT_WEIGHT，行为与 0.10.0 逐字节一致）
     const semWeight = options.semanticWeight ?? SEMANTIC_HIT_WEIGHT
     let score = 0
+    // 1.2.0（DESIGN-1.2 模块 F）：interpolate 模式溯源项——按实际加分顺序记录 [线, 加权系数]；
+    // 仅 explain=true（prov 非空）时填充，不改变下方任何算术路径与累加顺序
+    const terms: Array<[RecallLine, number]> = []
+    const iv = inferScores?.get(id)
+    const vv = vectorScores?.get(id)
     if (useRRF) {
       // RRF 融合模式：先收集三线有效候选，循环后按线全局排序融合（见 rrfFuseCandidates）
       if (bm25 > 0 || fuzzy > 0 || cov >= MINHASH_COVERAGE_THRESHOLD) {
@@ -572,20 +455,37 @@ export function queryIndex(
           cov: cov >= MINHASH_COVERAGE_THRESHOLD ? cov : 0,
           // 1.1.0：图谱线 raw 分（undefined 时不带该字段，RRF 融合结果与 1.0.0 一致）
           ...(gs !== undefined && gs > 0 ? { graph: gs } : {}),
+          // 1.2.0：推理线 raw 分（>0 才入线；缺省不计算时无此字段，与 1.1.1 逐字节一致）
+          ...(iv !== undefined && iv > 0 ? { infer: iv } : {}),
+          // 1.5.0：向量线 raw 分（>0 才入线；缺省不计算时无此字段，与 1.4.0 逐字节一致）
+          ...(vv !== undefined && vv > 0 ? { vector: vv } : {}),
           lineBase,
         })
+        if (prov) {
+          const raw: Partial<Record<RecallLine, number>> = {}
+          if (bm25 > 0) raw.bm25 = bm25
+          if (fuzzy > 0) raw.fuzzy = fuzzy
+          if (cov >= MINHASH_COVERAGE_THRESHOLD) raw.semantic = cov
+          if (gs !== undefined && gs > 0) raw.graph = gs
+          if (iv !== undefined && iv > 0) raw.infer = iv
+          if (vv !== undefined && vv > 0) raw.vector = vv
+          prov.set(id, { lineBase, raw })
+        }
       }
     } else if (bm25 > 0 || fuzzy > 0) {
       // 词面（含变体）命中：精确线 + 语义线叠加（semanticBoost 默认 false = 0.10.0 语义，
       // 语义线仅在词面零命中时兜底；true 时即使词面命中也叠加贡献，提升真实问句召回）
       const lexical = bm25 > 0 ? bm25 : fuzzy
       score = lexical * lineBase
+      if (prov) terms.push(bm25 > 0 ? ['bm25', bm25] : ['fuzzy', fuzzy])
       if (options.semanticBoost && cov >= MINHASH_COVERAGE_THRESHOLD) {
         score += semWeight * cov * lineBase
+        if (prov) terms.push(['semantic', semWeight * cov])
       }
     } else if (cov >= MINHASH_COVERAGE_THRESHOLD) {
       // 词面（含变体）全零命中 → 近似语义召回（精确查询覆盖率 ≥ 阈值才进入）
       score = semWeight * cov * lineBase
+      if (prov) terms.push(['semantic', semWeight * cov])
     }
     // 1.1.0（DESIGN-1.1 模块 C）：图谱线融合——interpolate 模式下线性叠加图分；
     // RRF 模式不在此叠加（候选走 rrfFuseCandidates 第四条秩融合，见下方补录段）。
@@ -593,30 +493,116 @@ export function queryIndex(
     // 词面/语义全零但图可达的条目也能借此进入召回（图线兜底）。
     if (!useRRF && graphScores !== undefined) {
       const gs = graphScores.get(id)
-      if (gs !== undefined && gs > 0) score += graphWeight * gs * lineBase
+      if (gs !== undefined && gs > 0) {
+        score += graphWeight * gs * lineBase
+        if (prov) terms.push(['graph', graphWeight * gs])
+      }
     }
-    if (score > 0) scored.push({ ...entry, score })
+    // 1.2.0（DESIGN-1.2 模块 E）：推理线融合——interpolate 模式线性叠加（排在图谱线之后；
+    // 缺省 inferScores=undefined 时整段不执行，与 1.1.1 逐字节一致）。
+    if (!useRRF && inferScores !== undefined && iv !== undefined && iv > 0) {
+      score += inferWeight * iv * lineBase
+      if (prov) terms.push(['infer', inferWeight * iv])
+    }
+    // 1.5.0（DESIGN-1.5 模块 M）：向量线融合——interpolate 模式线性叠加（排在推理线之后；
+    // 缺省 vectorScores=undefined 时整段不执行，与 1.4.0 逐字节一致）。
+    if (!useRRF && vectorScores !== undefined && vv !== undefined && vv > 0) {
+      score += vectorWeight * vv * lineBase
+      if (prov) terms.push(['vector', vectorWeight * vv])
+    }
+    if (score > 0) {
+      scored.push({ ...entry, score })
+      if (prov && terms.length > 0) prov.set(id, { lineBase, terms })
+    }
   }
 
   // 1.1.0（DESIGN-1.1 模块 C）：图谱线补录——RRF 模式下词面/语义全零、但图可达的候选
   // 未经过上述三线分支进入 rrfCandidates，这里按图分直接补录为候选（graph 线参与第四条秩融合）。
   // 默认 graphEnabled=false 时 graphScores 为 undefined，整段不执行，行为与 1.0.0 一致。
+  // 1.1.1：去重查重从 O(V²) 的 some() 线性扫改为 Set 查找（图谱线大命中集时的平方热点）。
   if (useRRF && graphScores !== undefined) {
+    const rrfIds = new Set(rrfCandidates.map((c) => c.id))
     for (const [id, gs] of graphScores) {
       if (gs <= 0) continue
-      if (rrfCandidates.some((c) => c.id === id)) continue
+      if (rrfIds.has(id)) continue
       const entry = entriesBy.get(id)
       if (!entry) continue
       if (options.workspace && entry.workspace && entry.workspace !== options.workspace) continue
       if (options.kind && entry.kind !== options.kind) continue
       if (options.theme && !entry.tags.includes(options.theme)) continue
       rrfCandidates.push({ id, entry, bm25: 0, fuzzy: 0, cov: 0, graph: gs, lineBase: lineBaseFor(entry) })
+      if (prov) prov.set(id, { lineBase: lineBaseFor(entry), raw: { graph: gs } })
     }
   }
 
-  // 1.0.0（DESIGN-1.0 模块 B2）：RRF 融合——三线全局排序取 rank 后加权求和
+  // 1.2.0（DESIGN-1.2 模块 E）：推理线补录——RRF 模式下仅推理可达（前三线 + 图谱线全零）
+  // 的候选按推理分补录为第五条秩融合线；已在候选集的条目（含图谱补录）就地合并 infer
+  // 字段（双线证据共存，同 id 推理分唯一故 max 合并幂等）。
+  // 缺省 inferScores=undefined 时整段不执行，与 1.1.1 逐字节一致。
+  if (useRRF && inferScores !== undefined) {
+    const candById = new Map(rrfCandidates.map((c) => [c.id, c]))
+    for (const [id, isv] of inferScores) {
+      if (isv <= 0) continue
+      const existing = candById.get(id)
+      if (existing !== undefined) {
+        if ((existing.infer ?? 0) < isv) existing.infer = isv
+        if (prov) {
+          const p = prov.get(id)
+          if (p !== undefined) {
+            if (p.raw === undefined) p.raw = {}
+            if ((p.raw.infer ?? 0) < isv) p.raw.infer = isv
+          } else {
+            prov.set(id, { lineBase: existing.lineBase, raw: { infer: isv } })
+          }
+        }
+        continue
+      }
+      const entry = entriesBy.get(id)
+      if (!entry) continue
+      if (options.workspace && entry.workspace && entry.workspace !== options.workspace) continue
+      if (options.kind && entry.kind !== options.kind) continue
+      if (options.theme && !entry.tags.includes(options.theme)) continue
+      rrfCandidates.push({ id, entry, bm25: 0, fuzzy: 0, cov: 0, infer: isv, lineBase: lineBaseFor(entry) })
+      if (prov) prov.set(id, { lineBase: lineBaseFor(entry), raw: { infer: isv } })
+    }
+  }
+
+  // 1.5.0（DESIGN-1.5 模块 M）：向量线补录——RRF 模式下仅向量近邻（前五线全零）的候选
+  // 按余弦相似度补录为第六条秩融合线；已在候选集的条目就地合并 vector 字段（max 幂等）。
+  // 缺省 vectorScores=undefined 时整段不执行，与 1.4.0 逐字节一致。
+  if (useRRF && vectorScores !== undefined) {
+    const candById = new Map(rrfCandidates.map((c) => [c.id, c]))
+    for (const [id, vsv] of vectorScores) {
+      if (vsv <= 0) continue
+      const existing = candById.get(id)
+      if (existing !== undefined) {
+        if ((existing.vector ?? 0) < vsv) existing.vector = vsv
+        if (prov) {
+          const p = prov.get(id)
+          if (p !== undefined) {
+            if (p.raw === undefined) p.raw = {}
+            if ((p.raw.vector ?? 0) < vsv) p.raw.vector = vsv
+          } else {
+            prov.set(id, { lineBase: existing.lineBase, raw: { vector: vsv } })
+          }
+        }
+        continue
+      }
+      const entry = entriesBy.get(id)
+      if (!entry) continue
+      if (options.workspace && entry.workspace && entry.workspace !== options.workspace) continue
+      if (options.kind && entry.kind !== options.kind) continue
+      if (options.theme && !entry.tags.includes(options.theme)) continue
+      rrfCandidates.push({ id, entry, bm25: 0, fuzzy: 0, cov: 0, vector: vsv, lineBase: lineBaseFor(entry) })
+      if (prov) prov.set(id, { lineBase: lineBaseFor(entry), raw: { vector: vsv } })
+    }
+  }
+
+  // 1.0.0（DESIGN-1.0 模块 B2）：RRF 融合——三线全局排序取 rank 后加权求和；
+  // 1.2.0：explain=true 时同时收集各线 rank（溯源 perLine 的倒数秩贡献由此派生）
+  const rrfRanks = prov !== undefined ? new Map<string, RrfRanks>() : undefined
   if (useRRF && rrfCandidates.length > 0) {
-    scored.push(...rrfFuseCandidates(rrfCandidates))
+    scored.push(...rrfFuseCandidates(rrfCandidates, rrfRanks))
   }
 
   scored.sort((a, b) => b.score - a.score)
@@ -636,24 +622,75 @@ export function queryIndex(
   }
   if (supersededIds.size > 0) effective = scored.filter((h) => !supersededIds.has(h.id))
 
-  // token 预算裁剪（首条必含）
+  // token 预算裁剪（首条必含；1.1.1：超预算 **continue** 而非 break——排序优先级语义
+  // 保持不变，只允许用更靠后的更短命中填充剩余预算；此前一条超预算即整体截断，
+  // 超长命中会白白浪费尾部预算，预算利用率受损）
   const hits: MemoryHit[] = []
   let used = 0
   for (const hit of effective) {
     if (hits.length >= limit) break
     const cost = estimateTokens(`${hit.kind} ${hit.content}`)
-    if (hits.length > 0 && used + cost > maxTokens) break
+    if (hits.length > 0 && used + cost > maxTokens) continue
     used += cost
     hits.push(hit)
   }
-  return hits
-}
 
-/** token 计数（供查询向量） */
-function tokenCounts(text: string): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const t of tokenize(text)) counts.set(t, (counts.get(t) ?? 0) + 1)
-  return counts
+  // 1.2.0（DESIGN-1.2 模块 F）：溯源注记附加——最终命中集确定后按 prov 记录生成 why。
+  // score 直接取自命中对象（同源非重算）；interpolate 的 lines[].value 由 terms（实际加分的
+  // 加权项系数）派生，rrf 的由各线 rank 派生倒数秩贡献（与融合算术同序同值）。
+  if (prov !== undefined) {
+    // 1.3.0（DESIGN-1.3 模块 H）：该命中的推理证据链视图——终结实体关联到本条目的链
+    // （按链强度降序取前 3；链集合已确定性排序，截断与遍历顺序无关）。
+    const chainViews = (hitId: string): RecallInferChainView[] | undefined => {
+      if (inferChainsOut === undefined || graphSource === undefined) return undefined
+      const views: RecallInferChainView[] = []
+      for (const c of inferChainsOut) {
+        if (!graphSource.entryIdsByEntity(c.terminal).includes(hitId)) continue
+        views.push({
+          path: c.path.map((e) => ({
+            from: e.from,
+            relation: e.relation,
+            to: e.to,
+            confidence: e.confidence,
+            occurredAt: e.occurredAt,
+          })),
+          terminal: c.terminal,
+          score: c.score,
+        })
+        if (views.length >= 3) break
+      }
+      return views.length > 0 ? views : undefined
+    }
+    for (const hit of hits) {
+      const p = prov.get(hit.id)
+      if (p === undefined) continue
+      if (useRRF) {
+        const ranks = rrfRanks?.get(hit.id)
+        if (ranks === undefined) continue
+        const lines = RECALL_LINE_ORDER.filter((l) => ranks[l] !== undefined).map((l) => ({
+          line: l,
+          value: 1 / (RRF_K + (ranks[l] as number)),
+        }))
+        hit.why = { fusion: 'rrf', lines, lineBase: p.lineBase, score: hit.score }
+        // 1.3.0（模块 H）：infer 线参与融合的命中附带支撑它的推理链证据
+        const cv = lines.some((l) => l.line === 'infer') ? chainViews(hit.id) : undefined
+        if (cv !== undefined) hit.why.chains = cv
+      } else {
+        const seen = new Set<string>()
+        const lines: Array<{ line: RecallLine; value: number }> = []
+        for (const [line, coeff] of p.terms ?? []) {
+          if (seen.has(line)) continue
+          seen.add(line)
+          lines.push({ line, value: coeff })
+        }
+        if (lines.length === 0) continue
+        hit.why = { fusion: 'interpolate', lines, lineBase: p.lineBase, score: hit.score }
+        const cv = lines.some((l) => l.line === 'infer') ? chainViews(hit.id) : undefined
+        if (cv !== undefined) hit.why.chains = cv
+      }
+    }
+  }
+  return hits
 }
 
 /**
@@ -673,7 +710,21 @@ export interface RrfCandidate {
   cov: number
   /** 1.1.0：图谱线 raw 分（>0 才入线；缺省 undefined = 该候选不参与图谱线） */
   graph?: number
+  /** 1.2.0：推理线 raw 分（>0 才入线；缺省 undefined = 该候选不参与推理线） */
+  infer?: number
+  /** 1.5.0：向量线 raw 分（>0 才入线；缺省 undefined = 该候选不参与向量线） */
+  vector?: number
   lineBase: number
+}
+
+/** 1.2.0：RRF 各线排名（1-based；仅参与该线的候选携带键）——溯源 perLine 的数据源 */
+export interface RrfRanks {
+  bm25?: number
+  fuzzy?: number
+  semantic?: number
+  graph?: number
+  infer?: number
+  vector?: number
 }
 
 /**
@@ -686,7 +737,7 @@ export interface RrfCandidate {
  * （0.10.0 中语义线仅在词面零命中时以 0.3 权重兜底，无法与词面命中叠加）。
  * 纯函数可复算；排序稳定（并列分按 id 字典序兜底，保证结果确定性）。
  */
-export function rrfFuseCandidates(candidates: RrfCandidate[]): MemoryHit[] {
+export function rrfFuseCandidates(candidates: RrfCandidate[], ranksOut?: Map<string, RrfRanks>): MemoryHit[] {
   if (candidates.length === 0) return []
   const rankBy = (pick: (c: RrfCandidate) => number): Map<string, number> => {
     const ranked = [...candidates]
@@ -703,19 +754,55 @@ export function rrfFuseCandidates(candidates: RrfCandidate[]): MemoryHit[] {
   const rankF = rankBy((c) => c.fuzzy)
   const rankC = rankBy((c) => c.cov)
   const rankG = rankBy((c) => c.graph ?? 0)
+  const rankI = rankBy((c) => c.infer ?? 0)
+  const rankV = rankBy((c) => c.vector ?? 0)
   const fused: MemoryHit[] = []
   for (const c of candidates) {
     const rb = rankB.get(c.id)
     const rf = rankF.get(c.id)
     const rc = rankC.get(c.id)
     const rg = rankG.get(c.id)
+    const ri = rankI.get(c.id)
+    const rv = rankV.get(c.id)
     let rrf = 0
+    // 累加顺序即融合语义（rb→rf→rc→rg→ri→rv 固定序）；1.2.0 推理项、1.5.0 向量项
+    // 均追加在末尾，缺省无该字段时与前一版逐字节一致
     if (rb !== undefined) rrf += 1 / (RRF_K + rb)
     if (rf !== undefined) rrf += 1 / (RRF_K + rf)
     if (rc !== undefined) rrf += 1 / (RRF_K + rc)
     if (rg !== undefined) rrf += 1 / (RRF_K + rg)
+    if (ri !== undefined) rrf += 1 / (RRF_K + ri)
+    if (rv !== undefined) rrf += 1 / (RRF_K + rv)
     const score = rrf * c.lineBase
     if (score > 0) fused.push({ ...c.entry, score })
+  }
+  // 1.2.0（DESIGN-1.2 模块 F）：溯源输出——各线 1-based rank（仅参与该线的候选携带键）
+  if (ranksOut !== undefined) {
+    for (const c of candidates) {
+      const rb = rankB.get(c.id)
+      const rf = rankF.get(c.id)
+      const rc = rankC.get(c.id)
+      const rg = rankG.get(c.id)
+      const ri = rankI.get(c.id)
+      const rv = rankV.get(c.id)
+      if (
+        rb === undefined &&
+        rf === undefined &&
+        rc === undefined &&
+        rg === undefined &&
+        ri === undefined &&
+        rv === undefined
+      )
+        continue
+      const r: RrfRanks = {}
+      if (rb !== undefined) r.bm25 = rb
+      if (rf !== undefined) r.fuzzy = rf
+      if (rc !== undefined) r.semantic = rc
+      if (rg !== undefined) r.graph = rg
+      if (ri !== undefined) r.infer = ri
+      if (rv !== undefined) r.vector = rv
+      ranksOut.set(c.id, r)
+    }
   }
   return fused
 }
@@ -724,7 +811,13 @@ export function rrfFuseCandidates(candidates: RrfCandidate[]): MemoryHit[] {
 export function recall(entries: MemoryEntry[], query: string, options: RecallOptions = {}): MemoryHit[] {
   const index = buildIndex(entries)
   const byId = new Map(entries.map((e) => [e.id, e]))
-  return queryIndex(index, query, options, byId)
+  // 1.5.0（DESIGN-1.5 模块 M）：一次性召回路径（含情景回放）上向量线启用但未注入时
+  // 按语料现建索引（O(N·efConstruct) 一次性成本；工具层热路径走 VectorIndexCache 复用）
+  const opts =
+    options.vectorEnabled === true && options.vector === undefined
+      ? { ...options, vector: buildVectorIndex(entries) }
+      : options
+  return queryIndex(index, query, opts, byId)
 }
 
 /**
@@ -761,11 +854,16 @@ export class IndexCache {
       this.fingerprint = fingerprint(entries)
       this.revision = rev
     } else if (rev !== this.revision) {
-      if (fingerprint(entries) !== this.fingerprint) {
+      const fp = fingerprint(entries)
+      if (fp !== this.fingerprint) {
         this.index = buildIndex(entries)
-        this.byId = new Map(entries.map((e) => [e.id, e]))
-        this.fingerprint = fingerprint(entries)
+        this.fingerprint = fp
       }
+      // byId 始终按最新 entries 重建：纯热度更新（accessCount/lastAccessAt 变化）时
+      // 索引确可复用（指纹未变），但 heatScore/decay 消费的正是 byId 里的条目对象——
+      // 不刷新则热度评分被冻结在索引构建时刻，召回热度回写（bumped）也基于过期值累加。
+      // 重建 byId 是 O(N) Map 填充，远廉于 buildIndex 的分词 + MinHash，热路径可承受。
+      this.byId = new Map(entries.map((e) => [e.id, e]))
       this.revision = rev
     }
     return queryIndex(this.index, queryText, options, this.byId)
@@ -780,70 +878,7 @@ export class IndexCache {
   }
 }
 
-/** 内容指纹：id+content+tags 的轻量哈希（非密码学用途，仅缓存失效判定） */
-export function fingerprint(entries: readonly MemoryEntry[]): string {
-  const h = createHash('sha256')
-  for (const e of entries) {
-    h.update(e.id)
-    h.update('\u0000')
-    h.update(e.content)
-    h.update('\u0000')
-    for (const t of e.tags) h.update(t + '\u0000')
-  }
-  return h.digest('hex')
-}
-
-/**
- * 1.0.0 UF-1.0（DESIGN-1.0 模块 C1）：内容级库内去重检测。
- * 语义升级：以 `contentHash(content)` 为**跨 id 前缀的统一指纹**（捕获 `contentHash-uuid`、
- * 显式 `contentHash-uuid`、导入 `imp-contentHash` 三种 id 规范互认），两层级判定：
- * 1. 指纹精确命中（同内容）→ 去重；
- * 2. 窗口内编辑距离近似（similarity > 0.92，长度预筛避免 O(L²)）→ 去重。
- * 性能路径：firstPass 构建 O(N) 指纹索引后查 O(1) 精确命中，再保留长度窗口预筛
- * 做近似比对——较 0.10.0 的逐条 `e.content === content` 提前 O(N) 降为 O(1)。
- * 返回 true 表示「窗口内已存在内容级重复」，调用方应拒绝写入。
- */
-export function detectDuplicate(
-  existing: readonly MemoryEntry[],
-  content: string,
-  windowMs: number,
-  now = Date.now(),
-): boolean {
-  if (windowMs <= 0) return false
-  const len = content.length
-  const hash = contentHash(content)
-  // 指纹索引：O(N) 构建一次，O(1) 查询；仅索引窗口内条目（避免过期条目占索引）
-  const hashIndex = new Set<string>()
-  let approx: MemoryEntry[] | undefined
-  for (const e of existing) {
-    if (now - e.createdAt > windowMs) continue
-    hashIndex.add(contentHash(e.content))
-    if (e.content !== content) {
-      // 近似比对候选收集到第二遍处理（与精确命中路径隔离，避免无谓的 similarity 调用）
-      const eLen = e.content.length
-      const maxLen = Math.max(len, eLen)
-      if (Math.abs(eLen - len) <= 0.08 * maxLen + 1) {
-        ;(approx ??= []).push(e)
-      }
-    }
-  }
-  if (hashIndex.has(hash)) return true
-  // 长度窗口预筛后的近似比对（第 2 层；候选已受限，similarity 仅对窗口内长度相近条目执行）
-  if (approx !== undefined) {
-    for (const e of approx) {
-      if (similarity(e.content, content) > 0.92) return true
-    }
-  }
-  return false
-}
-
-/**
- * 内容近似度去重（0.2.0 起语义保持；1.0.0 起委托 UF-1.0 detectDuplicate，语义升级为
- * 「同指纹或窗口内近重复」双层级，向后兼容：对既有测试的全部输入行为一致或更宽松地拒绝同内容）。
- */
-export function isDuplicate(existing: MemoryEntry[], content: string, windowMs: number, now = Date.now()): boolean {
-  return detectDuplicate(existing, content, windowMs, now)
-}
+/** 内容指纹（1.5.0 下沉 hash.ts；此处经顶部 import 使用，re-export 见文件头） */
 
 /** 0.5.0 A4：热度默认半衰期（7 天，与既有时间衰减 decay 同数量级） */
 export const HEAT_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000
@@ -966,131 +1001,4 @@ export function summarize(entries: MemoryEntry[], bytes: number): MemoryStats {
   if (newestAt !== undefined) stats.newestAt = newestAt
   if (superseded > 0) stats.superseded = superseded
   return stats
-}
-
-// ---------------------------------------------------------------------------
-// 1.0.0 模块 A2：主题自动聚类（运行时视图，不持久化）
-// ---------------------------------------------------------------------------
-
-/** 主题簇：共享 token 数 ≥2 的条目聚为一类；label = 簇内最高频 token */
-export interface ThemeCluster {
-  /** 唯一 id（= label 的 hash 去冲突后截断） */
-  id: string
-  /** 主题标签（簇内 content 最高频 token） */
-  label: string
-  memberCount: number
-  /** 簇内 top 3 kind（按出现次数降序） */
-  topKinds: MemoryKind[]
-}
-
-/**
- * 1.0.0（DESIGN-1.0 模块 A2）：主题自动聚类——并查集连通分量。
- * 算法：token→条目倒排；两两共享 token 计数（Map<pair, count>）；
- * 共享 token ≥ minShared（默认 2）的条目对 union 进同一主题簇。
- * 主题 id = 簇内最高频 token（hash 截断去冲突），成员按 createdAt 升序稳定。
- * 纯函数、零 IO、可复算；O(N·tokens + pair 计数)，仅对共享 token 的条目对建 pair。
- */
-export function clusterThemes(entries: readonly MemoryEntry[], minShared = 2): ThemeCluster[] {
-  if (entries.length < 2) return []
-  // token → 条目索引（倒排）
-  const byToken = new Map<string, number[]>()
-  const tokenSets = new Map<string, Set<string>>()
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i]
-    if (!e) continue
-    const tokens = new Set(tokenize(e.content))
-    tokenSets.set(e.id, tokens)
-    for (const t of tokens) {
-      const list = byToken.get(t)
-      if (list) list.push(i)
-      else byToken.set(t, [i])
-    }
-  }
-  // pair 共享 token 计数
-  const pairCount = new Map<string, number>()
-  for (const ids of byToken.values()) {
-    if (ids.length < 2) continue
-    for (let a = 0; a < ids.length; a++) {
-      for (let b = a + 1; b < ids.length; b++) {
-        const ia = ids[a]!
-        const ib = ids[b]!
-        const key = ia < ib ? `${ia}\u0000${ib}` : `${ib}\u0000${ia}`
-        pairCount.set(key, (pairCount.get(key) ?? 0) + 1)
-      }
-    }
-  }
-  // 并查集：共享 ≥ minShared 个 token 的条目对 union（路径压缩）
-  const parent = new Array<number>(entries.length)
-  for (let i = 0; i < parent.length; i++) parent[i] = i
-  const find = (x: number): number => {
-    let r = x
-    while (parent[r] !== r) r = parent[r]!
-    let c = x
-    while (parent[c] !== c) {
-      const next = parent[c]!
-      parent[c] = r
-      c = next
-    }
-    return r
-  }
-  const union = (a: number, b: number): void => {
-    const ra = find(a)
-    const rb = find(b)
-    if (ra !== rb) parent[ra] = rb
-  }
-  for (const [key, count] of pairCount) {
-    if (count < minShared) continue
-    const sep = key.indexOf('\u0000')
-    union(Number(key.slice(0, sep)), Number(key.slice(sep + 1)))
-  }
-  // 簇内 token 频率聚合 → label / topKinds
-  const clusters = new Map<
-    number,
-    { members: number[]; tokenFreq: Map<string, number>; kinds: Map<MemoryKind, number> }
-  >()
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i]
-    if (!e) continue
-    const root = find(i)
-    let c = clusters.get(root)
-    if (!c) {
-      c = { members: [], tokenFreq: new Map(), kinds: new Map() }
-      clusters.set(root, c)
-    }
-    c.members.push(i)
-    for (const t of tokenSets.get(e.id) ?? []) c.tokenFreq.set(t, (c.tokenFreq.get(t) ?? 0) + 1)
-    c.kinds.set(e.kind, (c.kinds.get(e.kind) ?? 0) + 1)
-  }
-  const out: ThemeCluster[] = []
-  for (const c of clusters.values()) {
-    if (c.members.length < 2) continue
-    let label = ''
-    let best = 0
-    for (const [t, n] of c.tokenFreq) {
-      if (n > best) {
-        best = n
-        label = t
-      }
-    }
-    const topKinds = [...c.kinds.entries()]
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-      .slice(0, 3)
-      .map(([k]) => k)
-    out.push({
-      id: tokenThemeId(label),
-      label,
-      memberCount: c.members.length,
-      topKinds,
-    })
-  }
-  return out.sort((a, b) => b.memberCount - a.memberCount || (a.label < b.label ? -1 : 1))
-}
-
-/** 主题 id：label 的短哈希（去冲突不可见字符）+ 前缀，稳定可复现 */
-export function tokenThemeId(label: string): string {
-  let h = 0
-  for (let i = 0; i < label.length; i++) {
-    h = (h * 31 + label.charCodeAt(i)) >>> 0
-  }
-  return `theme-${h.toString(36)}`
 }

@@ -12,11 +12,12 @@
  * 与「卸载栅栏」两处调用，不挂接 recall/status 热路径（G11 零行为回归）。
  * 纯管道：无 IO 之外的副作用，可独立单测。
  */
-import { consolidate } from './consolidation'
-import { distillBatch, distilledLayer } from './distill'
+import { consolidate, reinforce } from './consolidation'
+import { distillBatch, distilledLayer, distilledTheme, isDistilled } from './distill'
+import { SUPERSEDED_BY_TAG_PREFIX } from './entry-factory'
 import type { TemporalGraph } from './graph'
 import type { HubMetrics } from './metrics'
-import type { MemoryStore } from './types'
+import type { MemoryEntry, MemoryStore } from './types'
 
 /** 认知维护所需的最小配置视图（取自 MemoryHubConfig 的映射子集） */
 export interface CognitiveMaintenanceConfig {
@@ -68,10 +69,32 @@ export async function runCognitiveMaintenance(
     if (distilled.length > 0) {
       // 幂等：确定性 id 已存在（上次维护已写入）则跳过，防 append-only 行膨胀
       const existingIds = new Set(entries.map((e) => e.id))
+      // 1.1.1 代际治理索引：既有蒸馏条目按 distilled-theme 归组。蒸馏 content 内嵌
+      // 簇成员数，簇成员增长 → content/hash/id 变化 → 产生新一代条目；上一代若不
+      // 治理将永久残留，且其内容是高频 bigram，在 BM25 上极易命中、持续挤占
+      // limit=8 的召回名额（代际膨胀：开启蒸馏反而负收益的根因）。
+      const existingByTheme = new Map<string, MemoryEntry[]>()
+      for (const e of entries) {
+        if (!isDistilled(e)) continue
+        const theme = distilledTheme(e)
+        if (theme === undefined) continue
+        const list = existingByTheme.get(theme)
+        if (list) list.push(e)
+        else existingByTheme.set(theme, [e])
+      }
       const fresh = distilled.filter((d) => !existingIds.has(d.id))
       for (const d of fresh) {
         await store.upsert(d)
         if (graph) graph.add(d) // 模块 C：蒸馏产物同步进图谱
+        // 代际治理：同主题上一代补 superseded-by 标记（召回降权 0.5 + 与新一代
+        // 同现时被取代对去重剔除），新一代成为唯一有效抽象层
+        const theme = distilledTheme(d)
+        for (const prev of (theme !== undefined ? existingByTheme.get(theme) : undefined) ?? []) {
+          const marker = `${SUPERSEDED_BY_TAG_PREFIX}${d.id}`
+          if (prev.tags.includes(marker)) continue
+          const updated: MemoryEntry = { ...prev, tags: [...prev.tags, marker], updatedAt: now }
+          await store.upsert(updated)
+        }
       }
       metrics.distilled = (metrics.distilled ?? 0) + fresh.length
       metrics.distilledAbstract =
@@ -82,19 +105,28 @@ export async function runCognitiveMaintenance(
     }
   }
 
-  // 模块 B：认知巩固（默认 off，零行为变化）
+  // 模块 B：认知巩固（默认 off，零行为变化）。
+  // 1.1.1 语义做实（召回锚定巩固）：只对「发生过**真实召回**的记忆」（accessCount > 0，
+  // 即 memory_recall 命中 / 用户显式访问过）执行到期巩固——真正的间隔重复（SRS）
+  // 要求复习事件来自实际回忆；此前对从未被召回过的条目也无差别 +1，是「假复习」，
+  // 效果为周期性热度泵（与遗忘曲线的语义相反）。从未被使用的记忆容许自然衰减
+  // （use it or lose it），status 的 due 观测不变，仍如实报告 fading 条目。
   if (cfg.consolidationMode === 'auto') {
-    const { due, reinforced } = consolidate(entries, now, { recallThreshold: cfg.recallThreshold })
+    const { due } = consolidate(entries, now, { recallThreshold: cfg.recallThreshold })
     metrics.consolidationDue = due.length
-    if (reinforced.length > 0) {
+    // 过滤必须在 reinforce **之前**作用于 due 原件（reinforce 副本的 accessCount 已 +1，
+    // 恒 >0，过滤形同虚设——T11 回归测试锁定此语义）
+    const dueUsed = due.filter((e) => e.accessCount > 0)
+    const actuallyReinforced = dueUsed.map((e) => reinforce(e, now))
+    if (actuallyReinforced.length > 0) {
       // 合并回写：与 heat flush 同一 coalesced 通道（upsertMany 单次落盘多行）
       if (typeof store.upsertMany === 'function') {
-        await store.upsertMany(reinforced)
+        await store.upsertMany(actuallyReinforced)
       } else {
-        for (const r of reinforced) await store.upsert(r)
+        for (const r of actuallyReinforced) await store.upsert(r)
       }
-      metrics.consolidated = (metrics.consolidated ?? 0) + reinforced.length
-      result.consolidated = reinforced.length
+      metrics.consolidated = (metrics.consolidated ?? 0) + actuallyReinforced.length
+      result.consolidated = actuallyReinforced.length
       // 巩固只改访问历史（content/updatedAt 未变），图谱边无需同步
     }
   }

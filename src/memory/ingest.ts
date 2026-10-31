@@ -12,9 +12,9 @@
  * 纯逻辑 + 只依赖 MemoryStore 接口，不依赖插件运行时，可独立单测。
  */
 import { containsSensitive, hasOpposingSignal, type CaptureCandidate } from './capture'
-import { detectContradiction } from './conflict'
+import { detectContradiction, CONFLICT_OF_TAG_PREFIX } from './conflict'
 import { detectDuplicate } from './engine'
-import { makeEntry, supersededByTargetId } from './entry-factory'
+import { makeEntry, SUPERSEDED_BY_TAG_PREFIX } from './entry-factory'
 import { similarity } from './engine'
 import type { HubMetrics } from './metrics'
 import type { GraphWriteSink, MemoryEntry, MemoryStore } from './types'
@@ -37,6 +37,8 @@ export interface IngestOptions {
   conflictSimilarity?: number
   /** 1.1.0：矛盾判定只对同 kind 生效（默认 true） */
   conflictSameKind?: boolean
+  /** 1.1.1：矛盾检测独立窗口（默认 30 天，与去重窗口解耦——信念反转常跨周） */
+  conflictWindowMs?: number
 }
 
 /**
@@ -67,6 +69,13 @@ export function findSupersedeTarget(
   return best
 }
 
+/** 把写入结果合入局部可见视图（同 id 覆盖、新 id 追加），供批内后续判定读到最新状态 */
+function upsertVisible(view: MemoryEntry[], entry: MemoryEntry): void {
+  const i = view.findIndex((e) => e.id === entry.id)
+  if (i >= 0) view[i] = entry
+  else view.push(entry)
+}
+
 /** 捕获类入库（source: 'auto'；事件捕获专用） */
 export async function ingestCaptured(
   store: MemoryStore,
@@ -77,7 +86,12 @@ export async function ingestCaptured(
   graph?: GraphWriteSink,
 ): Promise<void> {
   if (!cands.length) return
-  const existing = await store.list()
+  // 1.1.1 批内一致性修复：existing 是循环前的库内快照，此前的判定（去重/取代/矛盾）
+  // 全程读同一份过期视图——批内候选 A、B 先后取代同一旧条目 E 时，B 基于 E 的旧状态
+  // 通过守卫写入并覆盖掉 A 的 superseded-by 标记；批内近似重复也因看不到刚写入的
+  // 条目而漏检。现引入局部可见视图 visible（库内快照 + 本批已写入条目），所有判定
+  // 均基于该视图；store.list() 返回的是共享 copy-on-write 快照，不得原地修改。
+  const visible: MemoryEntry[] = [...(await store.list())]
   // 0.9.0 两级去重（C 薄弱项）：批内瞬时去重（内容精确键）+ 库内窗口去重（UF-1.0 指纹）。
   // 同批候选互相重复时只入库 1 条（0.8.0 双候选同文会生成两条不同 id 双写入库）。
   const batchSeen = new Set<string>()
@@ -92,14 +106,14 @@ export async function ingestCaptured(
       continue
     }
     batchSeen.add(batchKey)
-    if (detectDuplicate(existing, cand.content, opts.dedupWindowMs)) {
+    if (detectDuplicate(visible, cand.content, opts.dedupWindowMs)) {
       metrics.rejectedDuplicate++
       continue
     }
     // 1.0.0（模块 A1）：取代判定须在写入前确定（新条目要打 supersede:<旧id>）
     const target =
       opts.supersedeMode === 'auto'
-        ? findSupersedeTarget(existing, cand, {
+        ? findSupersedeTarget(visible, cand, {
             dedupWindowMs: opts.dedupWindowMs,
             ...(opts.supersedeSimilarity !== undefined ? { supersedeSimilarity: opts.supersedeSimilarity } : {}),
             ...(opts.supersedeSameKind !== undefined ? { supersedeSameKind: opts.supersedeSameKind } : {}),
@@ -109,8 +123,9 @@ export async function ingestCaptured(
     // 仅 set captured kind（对冲 kind 可能为 instruction，检测内部有强指令排除）。
     const conflictTarget =
       target === undefined && opts.conflictMode === 'auto'
-        ? detectContradiction(existing, cand, {
+        ? detectContradiction(visible, cand, {
             dedupWindowMs: opts.dedupWindowMs,
+            ...(opts.conflictWindowMs !== undefined ? { conflictWindowMs: opts.conflictWindowMs } : {}),
             ...(opts.conflictSimilarity !== undefined ? { conflictSimilarity: opts.conflictSimilarity } : {}),
             ...(opts.conflictSameKind !== undefined ? { conflictSameKind: opts.conflictSameKind } : {}),
           })
@@ -131,26 +146,35 @@ export async function ingestCaptured(
       ...(workspace !== undefined ? { workspace } : {}),
     })
     await store.upsert(entry)
+    upsertVisible(visible, entry)
     // 1.1.0（模块 C）：图谱写入钩子——新条目进图；旧条目被取代/冲突更新也进图
     // （superseded 更新让旧条目的边标记失效时间线，冲突更新刷新修正时间线）
     if (graph) graph.add(entry)
     if (target !== undefined) {
-      // 旧条目追加被取代标记（只在既有 tags 含 superseded-by 时跳过，避免重复打标）
-      if (!supersededByTargetId(target)) {
-        const updated: MemoryEntry = { ...target, tags: [...target.tags, `superseded-by:${entry.id}`], updatedAt: now }
+      // 旧条目追加被取代标记（1.1.1：守卫从「已有任一 superseded-by 就跳过」改为
+      // 「仅当已被**本条目**标记时跳过」——同一旧条目可被多个新条目先后取代，
+      // 各自的回指标记都应保留，此前双取代会静默丢失第一个标记）
+      const marker = `${SUPERSEDED_BY_TAG_PREFIX}${entry.id}`
+      if (!target.tags.includes(marker)) {
+        const updated: MemoryEntry = { ...target, tags: [...target.tags, marker], updatedAt: now }
         await store.upsert(updated)
+        upsertVisible(visible, updated)
         if (graph) graph.add(updated)
       }
     }
     if (conflictTarget !== undefined) {
       // 旧条目追加反向标注（conflict-of:<新id>，双向协议倒查 O(1)）
-      const updated: MemoryEntry = {
-        ...conflictTarget,
-        tags: [...conflictTarget.tags, `conflict-of:${entry.id}`],
-        updatedAt: now,
+      const marker = `${CONFLICT_OF_TAG_PREFIX}${entry.id}`
+      if (!conflictTarget.tags.includes(marker)) {
+        const updated: MemoryEntry = {
+          ...conflictTarget,
+          tags: [...conflictTarget.tags, marker],
+          updatedAt: now,
+        }
+        await store.upsert(updated)
+        upsertVisible(visible, updated)
+        if (graph) graph.add(updated)
       }
-      await store.upsert(updated)
-      if (graph) graph.add(updated)
     }
     metrics.capturedTotal++
   }

@@ -5,8 +5,12 @@ import eslint from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import prettier from 'eslint-config-prettier'
 import globals from 'globals'
+import { fileURLToPath } from 'node:url'
 
-const tsconfigRootDir = new URL('.', import.meta.url).pathname
+// 1.1.1 修复：URL.pathname 在 Windows 上产生 "/D:/..."（驱动器相对路径），
+// typescript projectService 拒绝其为 tsconfigRootDir → 全部类型感知规则静默失效。
+// fileURLToPath 才是跨平台的正确转换。
+const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url))
 
 export default tseslint.config(
   {
