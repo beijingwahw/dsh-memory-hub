@@ -3,6 +3,29 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 历史版本的设计全文见 `docs/history/`；本文件只保留**面向使用者的变更摘要**。
 
+## [1.6.0] - 2026-10-31
+
+应用级出口版：roadmap 最后一项「跨平台 GUI 记忆管理（桌面级应用：编辑/导入导出 UI/多库管理）」
+以**独立应用级交付物**关闭。本仓库侧变更刻意最小——新增 `./core` 纯库子路径导出，
+领域语义单一事实源不变。设计全文见 `docs/DESIGN-1.6.md`；应用见同级仓库 `dsh-memory-hub-gui`。
+
+### Added
+
+- **`./core` 纯库子路径导出**：`JsonlMemoryStore` / `recall` / `summarize` / `clusterThemes` /
+  `makeEntry`（取代协议）/ `planImport` / `renderMemoryHtml` / `parseKeyRecord` /
+  `containsSensitive` / 矛盾标注 / 数据模型守卫 / `MemoryHubError`——GUI 桌面端消费的
+  全部领域语义经此单一出口；零新增逻辑零副作用，主出口 `lib/index.js` 字节不变
+  （tsup 双入口独立打包）；
+- **导出面锁定测试**：`test/core-export-1.6.test.ts`（导出形态 + 最小闭环，防止重构静默漂移）。
+
+### External
+
+- **`dsh-memory-hub-gui` 1.0.0**（同级独立仓库，MIT）：Electron 跨平台桌面记忆管理——
+  多库管理（默认库与插件共享 `~/.dsh/memory-hub`）/ 编辑与取代协议 / 六线检索 + why 溯源 /
+  三源导入（预览→提交，内容级幂等）/ JSON 迁移包 + 可视化 HTML 双导出 / 加密口令全生命周期
+  （解锁·加密·轮换·解密回退·锁库）/ 维护统计视图；37 项单元测试 + 16 步无头 E2E 冒烟
+  （截图门禁，隔离 userData 可重复运行）+ Windows/macOS/Linux 三 OS 打包与 CI 矩阵。
+
 ## [1.5.1] - 2026-10-31
 
 可视化检索页版：roadmap「记忆时间轴 / 可视化检索页」项以仓库内可交付形态关闭。

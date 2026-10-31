@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-hub",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "DeepSeek Harness 智能会话记忆中心插件：本地优先、事件驱动自动捕获 + Agent 可主动调用的跨会话记忆，让 Harness 越用越懂你。",
   "type": "module",
   "main": "./lib/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./core": {
+      "types": "./lib/core.d.ts",
+      "default": "./lib/core.js"
     }
   },
   "files": [
