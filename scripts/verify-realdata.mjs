@@ -18,7 +18,7 @@ const manifest = readFileSync(manifestPath, 'utf8')
 
 const rowRe = /^\| `([^`]+\.md)` \|.*\| `([0-9a-f]{64})` \| (\d+) \|$/
 const expected = []
-for (const line of manifest.split('\n')) {
+for (const line of manifest.split(/\r?\n/)) {
   const m = line.match(rowRe)
   if (m) expected.push({ file: m[1], sha256: m[2], bytes: Number(m[3]) })
 }

@@ -1,0 +1,11 @@
+# 统一 LF：prettier endOfLine=lf 的 checkout 侧对齐（Windows CI 的 autocrlf
+# 曾把 MANIFEST.md 转成 CRLF，导致 verify-realdata 逐行正则零匹配而失败）
+* text=auto eol=lf
+
+# 二进制资产不做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.tgz binary
+*.gz binary
